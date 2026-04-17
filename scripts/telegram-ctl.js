@@ -222,7 +222,9 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error(`FATAL: ${err.message}`);
-  process.exit(1);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch(err => {
+    console.error(`FATAL: ${err.message}`);
+    process.exit(1);
+  });
+}
