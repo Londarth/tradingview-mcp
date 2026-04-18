@@ -100,7 +100,7 @@ function createSessionVWAP() {
   };
 }
 
-// ─── Timezone helper ───
+// ─── Timezone helpers ───
 
 function getHHMM_ET(isoTs) {
   const d = new Date(isoTs);
@@ -110,9 +110,8 @@ function getHHMM_ET(isoTs) {
 }
 
 function getDateStr(isoTs) {
-  // Get the ET date so session boundaries align correctly
   const d = new Date(isoTs);
-  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // YYYY-MM-DD
+  return d.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 // ─── Daily ATR map ───
@@ -136,107 +135,79 @@ function computeDailyATRMap(dailyBars, period = 14) {
 
 // ─── Exit check ───
 
-function checkExits(bar, position, sessionEnd) {
+function checkExits(bar, position, sessionEnd, vwap) {
   const hhmm = getHHMM_ET(bar.ts);
   if (hhmm >= sessionEnd) return { closed: true, exitPrice: bar.close, exitType: 'session_end' };
 
+  // VWAP stop: bar close past VWAP
+  if (position.stopType === 'vwap' && vwap) {
+    if (position.side === 'long' && bar.close < vwap) return { closed: true, exitPrice: bar.close, exitType: 'stop' };
+    if (position.side === 'short' && bar.close > vwap) return { closed: true, exitPrice: bar.close, exitType: 'stop' };
+  }
+
+  // Fixed stop/target
   if (position.side === 'long') {
-    if (bar.low <= position.stopPrice) return { closed: true, exitPrice: position.stopPrice, exitType: 'stop' };
+    if (position.stopType !== 'vwap' && bar.low <= position.stopPrice) return { closed: true, exitPrice: position.stopPrice, exitType: 'stop' };
     if (bar.high >= position.targetPrice) return { closed: true, exitPrice: position.targetPrice, exitType: 'target' };
   } else {
-    if (bar.high >= position.stopPrice) return { closed: true, exitPrice: position.stopPrice, exitType: 'stop' };
+    if (position.stopType !== 'vwap' && bar.high >= position.stopPrice) return { closed: true, exitPrice: position.stopPrice, exitType: 'stop' };
     if (bar.low <= position.targetPrice) return { closed: true, exitPrice: position.targetPrice, exitType: 'target' };
   }
   return { closed: false };
 }
 
-// ─── Strategy A: OR Micro Scalp ───
+// ─── Strategy A: Aziz ORB + VWAP ───
 
 function createStrategyAState() {
-  return {
-    openRangeHigh: null, openRangeLow: null, openingBarCount: 0, openingComplete: false,
-    brokeAbove: false, brokeBelow: false, longEntryReady: false, shortEntryReady: false,
-    tradedToday: false,
-  };
+  return { openRangeHigh: null, openRangeLow: null, openingComplete: false, tradedToday: false };
 }
 
 function processBarStrategyA(bar, state, hhmm, ind) {
-  const { sessionVWAP, smaVolume, atr5m, dailyATRMap, config } = ind;
-  if (hhmm < 930 || hhmm >= 1100) return { action: 'none' };
+  const { sessionVWAP, smaVolume, dailyATRMap, config } = ind;
+  if (hhmm < 930 || hhmm >= 1130) return { action: 'none' };
 
-  // Build opening range (first 3 bars: 9:30, 9:35, 9:40)
-  if (!state.openingComplete) {
-    if (state.openingBarCount === 0) {
-      state.openRangeHigh = bar.high; state.openRangeLow = bar.low; state.openingBarCount = 1;
-    } else if (state.openingBarCount < 3) {
-      state.openRangeHigh = Math.max(state.openRangeHigh, bar.high);
-      state.openRangeLow = Math.min(state.openRangeLow, bar.low);
-      state.openingBarCount++;
-      if (state.openingBarCount === 3) state.openingComplete = true;
-    }
-    return { action: 'none' };
+  // Single-bar opening range (9:30 bar)
+  if (hhmm === 930) {
+    state.openRangeHigh = bar.high;
+    state.openRangeLow = bar.low;
+    state.openingComplete = true;
   }
 
-  // ATR filter
+  if (!state.openingComplete) return { action: 'none' };
+
+  // ATR filter: OR range must be < daily ATR
   const rangeSize = state.openRangeHigh - state.openRangeLow;
   const dateStr = getDateStr(bar.ts);
   const dailyATR = dailyATRMap.get(dateStr);
-  const atrPct = dailyATR && dailyATR > 0 ? (rangeSize / dailyATR) * 100 : 0;
-  if (config.useAtrFilter && atrPct < config.atrPctThreshold) return { action: 'none' };
+  if (config.useAtrFilter && dailyATR && dailyATR > 0 && rangeSize >= dailyATR) return { action: 'none' };
 
-  // RVOL
+  // RVOL filter
   const volMA = smaVolume.value();
   const rvol = volMA && volMA > 0 ? bar.volume / volMA : 0;
   if (config.useRvolFilter && rvol < config.rvolThreshold) return { action: 'none' };
 
   const vwap = sessionVWAP.value();
-  if (!vwap) return { action: 'none' };
+  if (!vwap || state.tradedToday) return { action: 'none' };
 
-  // Breakout detection
-  if (!state.tradedToday) {
-    if (!state.brokeAbove && bar.close > state.openRangeHigh && (!config.useRvolFilter || rvol >= config.rvolThreshold)) {
-      state.brokeAbove = true; state.longEntryReady = true;
-    }
-    if (!state.brokeBelow && bar.close < state.openRangeLow && (!config.useRvolFilter || rvol >= config.rvolThreshold)) {
-      state.brokeBelow = true; state.shortEntryReady = true;
-    }
+  // Breakout entry — no retest, no wick filter
+  if (bar.close > state.openRangeHigh && bar.close > vwap) {
+    const risk = bar.close - vwap;
+    const target = bar.close + risk * config.targetR;
+    state.tradedToday = true;
+    return { action: 'enter', side: 'long', stop: vwap, target, stopType: 'vwap' };
   }
 
-  const atrVal = atr5m.value();
-  if (!atrVal) return { action: 'none' };
-
-  // Long retest + wick
-  if (state.longEntryReady && !state.tradedToday) {
-    const longRetest = bar.low <= state.openRangeHigh && bar.close > state.openRangeHigh && bar.close > vwap;
-    const range = bar.high - bar.low;
-    const isHammer = range > 0 ? (Math.min(bar.open, bar.close) - bar.low) / range >= 0.6 : false;
-    if (longRetest && isHammer) {
-      const stop = state.openRangeLow - atrVal * config.stopAtrMult;
-      const risk = bar.close - stop;
-      const target = bar.close + risk * config.targetR;
-      state.tradedToday = true; state.longEntryReady = false;
-      return { action: 'enter', side: 'long', stop, target };
-    }
-  }
-
-  // Short retest + wick
-  if (state.shortEntryReady && !state.tradedToday) {
-    const shortRetest = bar.high >= state.openRangeLow && bar.close < state.openRangeLow && bar.close < vwap;
-    const range = bar.high - bar.low;
-    const isInvHammer = range > 0 ? (bar.high - Math.max(bar.open, bar.close)) / range >= 0.6 : false;
-    if (shortRetest && isInvHammer) {
-      const stop = state.openRangeHigh + atrVal * config.stopAtrMult;
-      const risk = stop - bar.close;
-      const target = bar.close - risk * config.targetR;
-      state.tradedToday = true; state.shortEntryReady = false;
-      return { action: 'enter', side: 'short', stop, target };
-    }
+  if (bar.close < state.openRangeLow && bar.close < vwap) {
+    const risk = vwap - bar.close;
+    const target = bar.close - risk * config.targetR;
+    state.tradedToday = true;
+    return { action: 'enter', side: 'short', stop: vwap, target, stopType: 'vwap' };
   }
 
   return { action: 'none' };
 }
 
-// ─── Strategy B: VWAP Reversion Scalp ───
+// ─── Strategy B: VWAP Reversion Scalp (tuned) ───
 
 function createStrategyBState() {
   return { barsSinceLast: 9999 };
@@ -265,14 +236,14 @@ function processBarStrategyB(bar, state, hhmm, ind) {
     const stop = bar.close - atr * config.stopAtrMult;
     const target = vwap;
     state.barsSinceLast = 0;
-    return { action: 'enter', side: 'long', stop, target };
+    return { action: 'enter', side: 'long', stop, target, stopType: 'fixed' };
   }
 
   if (distFromVwap >= config.atrDistMult && (!config.useRsiFilter || rsi > config.rsiMinShort) && volOk) {
     const stop = bar.close + atr * config.stopAtrMult;
     const target = vwap;
     state.barsSinceLast = 0;
-    return { action: 'enter', side: 'short', stop, target };
+    return { action: 'enter', side: 'short', stop, target, stopType: 'fixed' };
   }
 
   return { action: 'none' };
@@ -281,7 +252,8 @@ function processBarStrategyB(bar, state, hhmm, ind) {
 // ─── Simulation engine ───
 
 function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap) {
-  let equity = 200;
+  const initialCapital = config.initialCapital || 200;
+  let equity = initialCapital;
   let position = null;
   const trades = [];
   let state = stateInitFn();
@@ -294,19 +266,22 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap) {
   let maxDrawdown = 0;
   const equityCurve = [equity];
 
+  function calcQty() {
+    const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionGBP || 20);
+    return positionValue / (position ? position.entryPrice : 1);
+  }
+
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
     const barDate = getDateStr(bar.ts);
     const hhmm = getHHMM_ET(bar.ts);
 
-    // New session: reset VWAP and strategy state
     if (barDate !== currentDate) {
       currentDate = barDate;
       sessionVWAP.reset();
       state = stateInitFn();
     }
 
-    // Feed indicators
     sessionVWAP.push(bar);
     smaVolume.push(bar.volume);
     atr5m.push(bar);
@@ -314,9 +289,9 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap) {
 
     // Check exits first
     if (position) {
-      const exit = checkExits(bar, position, config.sessionEnd);
+      const exit = checkExits(bar, position, config.sessionEnd, sessionVWAP.value());
       if (exit.closed) {
-        const qty = (equity * (config.riskPct / 100)) / position.entryPrice;
+        const qty = calcQty();
         const pnl = (exit.exitPrice - position.entryPrice) * qty * (position.side === 'short' ? -1 : 1);
         equity += pnl;
         trades.push({ ...position, exitPrice: exit.exitPrice, exitType: exit.exitType, pnl, qty });
@@ -327,16 +302,18 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap) {
       }
     }
 
-    // Check entries (only if flat)
+    // Check entries
     if (!position) {
       const signal = processBarFn(bar, state, hhmm, {
         sessionVWAP, smaVolume, atr5m, rsi14, dailyATRMap, config,
       });
       if (signal.action === 'enter') {
-        const qty = (equity * (config.riskPct / 100)) / bar.close;
+        const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionGBP || 20);
+        const qty = positionValue / bar.close;
         position = {
           side: signal.side, entryPrice: bar.close,
           stopPrice: signal.stop, targetPrice: signal.target,
+          stopType: signal.stopType || 'fixed',
           entryDate: barDate,
         };
       }
@@ -346,14 +323,15 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap) {
   // Force-close at end of data
   if (position) {
     const lastBar = bars[bars.length - 1];
-    const qty = (equity * (config.riskPct / 100)) / position.entryPrice;
+    const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionGBP || 20);
+    const qty = positionValue / position.entryPrice;
     const pnl = (lastBar.close - position.entryPrice) * qty * (position.side === 'short' ? -1 : 1);
     equity += pnl;
     trades.push({ ...position, exitPrice: lastBar.close, exitType: 'data_end', pnl, qty });
     equityCurve.push(equity);
   }
 
-  return computeStats(trades, 200, equityCurve, maxDrawdown);
+  return { trades, ...computeStats(trades, initialCapital, equityCurve, maxDrawdown), finalEquity: equity, initialCapital };
 }
 
 // ─── Stats ───
@@ -386,20 +364,45 @@ function printReport(a, b, symbol, startDate, endDate) {
   console.log(`  BACKTEST: ${symbol}  (${startDate} to ${endDate})`);
   console.log('='.repeat(60));
   console.log('');
-  console.log(`${'Metric'.padEnd(22)}${'OR Micro Scalp'.padStart(18)}${'VWAP Reversion'.padStart(18)}`);
+  console.log(`${'Metric'.padEnd(22)}${'Aziz ORB+VWAP'.padStart(18)}${'VWAP Reversion'.padStart(18)}`);
   console.log('-'.repeat(58));
   console.log(`${'Total Trades'.padEnd(22)}${String(a.totalTrades).padStart(18)}${String(b.totalTrades).padStart(18)}`);
   console.log(`${'Wins'.padEnd(22)}${String(a.wins).padStart(18)}${String(b.wins).padStart(18)}`);
   console.log(`${'Losses'.padEnd(22)}${String(a.losses).padStart(18)}${String(b.losses).padStart(18)}`);
   console.log(`${'Win Rate'.padEnd(22)}${pct(a.winRate).padStart(18)}${pct(b.winRate).padStart(18)}`);
   console.log(`${'Net P&L'.padEnd(22)}${gbp(a.netPnL).padStart(18)}${gbp(b.netPnL).padStart(18)}`);
+  console.log(`${'Final Equity'.padEnd(22)}${gbp(a.finalEquity).padStart(18)}${gbp(b.finalEquity).padStart(18)}`);
   console.log(`${'Avg Win'.padEnd(22)}${gbp(a.avgWin).padStart(18)}${gbp(b.avgWin).padStart(18)}`);
   console.log(`${'Avg Loss'.padEnd(22)}${gbp(a.avgLoss).padStart(18)}${gbp(b.avgLoss).padStart(18)}`);
   console.log(`${'Max Drawdown'.padEnd(22)}${pct(a.maxDrawdown).padStart(18)}${pct(b.maxDrawdown).padStart(18)}`);
   console.log(`${'Profit Factor'.padEnd(22)}${num(a.profitFactor).padStart(18)}${num(b.profitFactor).padStart(18)}`);
   console.log('-'.repeat(58));
+
+  printTradeLog('AZIZ ORB+VWAP', a.trades, a.initialCapital);
+  printTradeLog('VWAP REVERSION', b.trades, b.initialCapital);
+
   console.log('');
-  console.log(`Initial capital: £200 | Position size: 1% equity | No slippage/commission`);
+  console.log(`Capital: £${a.initialCapital} | Risk: 10% equity/trade (min £20) | No slippage/commission`);
+}
+
+function printTradeLog(name, trades, initialCapital) {
+  if (!trades || trades.length === 0) {
+    console.log(`\n  ${name} — No trades`);
+    return;
+  }
+  console.log('');
+  console.log(`  ${name} — Trade Log`);
+  console.log(`  ${'Date'.padEnd(12)}${'Side'.padEnd(7)}${'Entry'.padEnd(10)}${'Exit'.padEnd(10)}${'Type'.padEnd(14)}${'P&L'.padStart(9)}${'Equity'.padStart(10)}`);
+  console.log(`  ${'----'.padEnd(12)}${'----'.padEnd(7)}${'-----'.padEnd(10)}${'----'.padEnd(10)}${'----'.padEnd(14)}${'---'.padStart(9)}${'-------'.padStart(10)}`);
+
+  let runningEquity = initialCapital;
+  for (const t of trades) {
+    runningEquity += t.pnl;
+    const side = t.side === 'long' ? 'LONG' : 'SHORT';
+    const exitType = t.exitType === 'target' ? 'TP' : t.exitType === 'stop' ? 'SL' : t.exitType === 'session_end' ? 'EOD' : 'END';
+    const pnlStr = (t.pnl >= 0 ? '+' : '') + '£' + t.pnl.toFixed(2);
+    console.log(`  ${t.entryDate.padEnd(12)}${side.padEnd(7)}${t.entryPrice.toFixed(2).padEnd(10)}${t.exitPrice.toFixed(2).padEnd(10)}${exitType.padEnd(14)}${pnlStr.padStart(9)}${('£' + runningEquity.toFixed(2)).padStart(10)}`);
+  }
 }
 
 // ─── Main ───
@@ -408,7 +411,7 @@ async function main() {
   const symbol = process.argv[2] || 'AMD';
   const startDate = process.argv[3] || new Date(Date.now() - 180 * 86400000).toISOString().split('T')[0];
   const endDate = process.argv[4] || new Date().toISOString().split('T')[0];
-  const dailyStart = new Date(Date.parse(startDate) - 45 * 86400000).toISOString().split('T')[0]; // 45 days extra for daily ATR
+  const dailyStart = new Date(Date.parse(startDate) - 45 * 86400000).toISOString().split('T')[0];
 
   console.log(`Fetching ${symbol} 5-min bars (${startDate} to ${endDate})...`);
   const raw5 = await fetchBarsPaginated(symbol, '5Min', startDate, endDate);
@@ -422,24 +425,24 @@ async function main() {
   console.log(`  Got ${dailyBars.length} daily bars, ATR map: ${dailyATRMap.size} dates`);
 
   const configA = {
-    sessionEnd: 1100, riskPct: 1,
-    useAtrFilter: true, atrPctThreshold: 20,
-    useRvolFilter: true, rvolThreshold: 1.2, volumeMALength: 12,
-    stopAtrMult: 0.5, targetR: 1.5,
+    sessionEnd: 1130, riskPct: 10, minPositionGBP: 20, initialCapital: 200,
+    useAtrFilter: true,
+    useRvolFilter: true, rvolThreshold: 1.5, volumeMALength: 12,
+    targetR: 2.0,
   };
 
   const configB = {
-    sessionEnd: 1130, riskPct: 1,
-    atrDistMult: 1.5, stopAtrMult: 0.5,
+    sessionEnd: 1130, riskPct: 10, minPositionGBP: 20, initialCapital: 200,
+    atrDistMult: 1.0, stopAtrMult: 0.5,
     useRsiFilter: true, rsiMaxLong: 70, rsiMinShort: 30,
     useVolFilter: true, volumeMALength: 12,
     cooldownBars: 10,
   };
 
-  console.log('Running OR Micro Scalp backtest...');
+  console.log('Running Aziz ORB + VWAP backtest...');
   const resultA = runBacktest(bars, processBarStrategyA, createStrategyAState, configA, dailyATRMap);
 
-  console.log('Running VWAP Reversion Scalp backtest...');
+  console.log('Running VWAP Reversion backtest...');
   const resultB = runBacktest(bars, processBarStrategyB, createStrategyBState, configB, dailyATRMap);
 
   printReport(resultA, resultB, symbol, startDate, endDate);
