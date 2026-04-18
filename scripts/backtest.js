@@ -539,23 +539,15 @@ async function runScannerMode(startDate, endDate) {
     console.log(`  ${dateStr}: ${names}`);
   }
 
-  // Run backtests for scanner-selected symbols
+  // Run Aziz ORB+VWAP only on scanner-selected symbols
   const configA = {
     sessionEnd: 1130, riskPct: 10, minPositionGBP: 20, initialCapital: 200,
     useAtrFilter: true,
     useRvolFilter: true, rvolThreshold: 1.5, volumeMALength: 12,
     targetR: 2.0,
   };
-  const configB = {
-    sessionEnd: 1130, riskPct: 10, minPositionGBP: 20, initialCapital: 200,
-    atrDistMult: 1.0, stopAtrMult: 0.5,
-    useRsiFilter: true, rsiMaxLong: 70, rsiMinShort: 30,
-    useVolFilter: true, volumeMALength: 12,
-    cooldownBars: 10,
-  };
 
   const resultsA = {};
-  const resultsB = {};
 
   for (const symbol of Object.keys(allBars5m)) {
     const selectedDays = new Set();
@@ -565,64 +557,47 @@ async function runScannerMode(startDate, endDate) {
     if (selectedDays.size === 0) continue;
 
     resultsA[symbol] = runBacktest(allBars5m[symbol], processBarStrategyA, createStrategyAState, configA, allDailyATRMaps[symbol], selectedDays);
-    resultsB[symbol] = runBacktest(allBars5m[symbol], processBarStrategyB, createStrategyBState, configB, allDailyATRMaps[symbol], selectedDays);
   }
 
   const combinedA = combineSymbolResults(resultsA, configA.initialCapital);
-  const combinedB = combineSymbolResults(resultsB, configB.initialCapital);
-
-  printScannerReport(combinedA, combinedB, startDate, endDate);
+  printScannerReport(combinedA, startDate, endDate, configA.targetR);
 }
 
-function printScannerReport(a, b, startDate, endDate) {
+function printScannerReport(a, startDate, endDate, targetR) {
   const gbp = v => (v >= 0 ? '+' : '') + '£' + v.toFixed(2);
   const pct = v => v.toFixed(1) + '%';
   const num = v => v.toFixed(2);
 
   console.log('\n' + '='.repeat(60));
-  console.log(`  SCANNER BACKTEST: RVOL-Selected Stocks (${startDate} to ${endDate})`);
+  console.log(`  AZIZ ORB+VWAP SCANNER (${startDate} to ${endDate})`);
+  console.log(`  Target: ${targetR}R | Stop: VWAP close | Filters: RVOL>1.5, ATR, gap<3%`);
   console.log('='.repeat(60));
   console.log('');
-  console.log(`${'Metric'.padEnd(22)}${'Aziz ORB+VWAP'.padStart(18)}${'VWAP Reversion'.padStart(18)}`);
-  console.log('-'.repeat(58));
-  console.log(`${'Total Trades'.padEnd(22)}${String(a.totalTrades).padStart(18)}${String(b.totalTrades).padStart(18)}`);
-  console.log(`${'Wins'.padEnd(22)}${String(a.wins).padStart(18)}${String(b.wins).padStart(18)}`);
-  console.log(`${'Losses'.padEnd(22)}${String(a.losses).padStart(18)}${String(b.losses).padStart(18)}`);
-  console.log(`${'Win Rate'.padEnd(22)}${pct(a.winRate).padStart(18)}${pct(b.winRate).padStart(18)}`);
-  console.log(`${'Net P&L'.padEnd(22)}${gbp(a.netPnL).padStart(18)}${gbp(b.netPnL).padStart(18)}`);
-  console.log(`${'Final Equity'.padEnd(22)}${gbp(a.finalEquity).padStart(18)}${gbp(b.finalEquity).padStart(18)}`);
-  console.log(`${'Avg Win'.padEnd(22)}${gbp(a.avgWin).padStart(18)}${gbp(b.avgWin).padStart(18)}`);
-  console.log(`${'Avg Loss'.padEnd(22)}${gbp(a.avgLoss).padStart(18)}${gbp(b.avgLoss).padStart(18)}`);
-  console.log(`${'Max Drawdown'.padEnd(22)}${pct(a.maxDrawdown).padStart(18)}${pct(b.maxDrawdown).padStart(18)}`);
-  console.log(`${'Profit Factor'.padEnd(22)}${num(a.profitFactor).padStart(18)}${num(b.profitFactor).padStart(18)}`);
-  console.log('-'.repeat(58));
+  console.log(`${'Total Trades'.padEnd(22)}${String(a.totalTrades).padStart(10)}`);
+  console.log(`${'Wins'.padEnd(22)}${String(a.wins).padStart(10)}`);
+  console.log(`${'Losses'.padEnd(22)}${String(a.losses).padStart(10)}`);
+  console.log(`${'Win Rate'.padEnd(22)}${pct(a.winRate).padStart(10)}`);
+  console.log(`${'Net P&L'.padEnd(22)}${gbp(a.netPnL).padStart(10)}`);
+  console.log(`${'Final Equity'.padEnd(22)}${gbp(a.finalEquity).padStart(10)}`);
+  console.log(`${'Avg Win'.padEnd(22)}${gbp(a.avgWin).padStart(10)}`);
+  console.log(`${'Avg Loss'.padEnd(22)}${gbp(a.avgLoss).padStart(10)}`);
+  console.log(`${'Max Drawdown'.padEnd(22)}${pct(a.maxDrawdown).padStart(10)}`);
+  console.log(`${'Profit Factor'.padEnd(22)}${num(a.profitFactor).padStart(10)}`);
+  console.log('-'.repeat(32));
 
-  // Per-symbol breakdown
-  const symbolsA = Object.keys(a.perSymbol);
-  if (symbolsA.length > 0) {
-    console.log(`\n  Aziz ORB+VWAP — Per-Symbol Breakdown`);
+  const symbols = Object.keys(a.perSymbol);
+  if (symbols.length > 0) {
+    console.log(`\n  Per-Symbol Breakdown`);
     console.log(`  ${'Symbol'.padEnd(8)}${'Trades'.padStart(8)}${'WR%'.padStart(8)}${'P&L'.padStart(10)}${'PF'.padStart(8)}`);
     console.log(`  ${'------'.padEnd(8)}${'------'.padStart(8)}${'---'.padStart(8)}${'---'.padStart(10)}${'--'.padStart(8)}`);
-    for (const sym of symbolsA.sort()) {
+    for (const sym of symbols.sort()) {
       const r = a.perSymbol[sym];
       if (r.totalTrades === 0) continue;
       console.log(`  ${sym.padEnd(8)}${String(r.totalTrades).padStart(8)}${pct(r.winRate).padStart(8)}${gbp(r.netPnL).padStart(10)}${num(r.profitFactor).padStart(8)}`);
     }
   }
 
-  const symbolsB = Object.keys(b.perSymbol);
-  if (symbolsB.length > 0) {
-    console.log(`\n  VWAP Reversion — Per-Symbol Breakdown`);
-    console.log(`  ${'Symbol'.padEnd(8)}${'Trades'.padStart(8)}${'WR%'.padStart(8)}${'P&L'.padStart(10)}${'PF'.padStart(8)}`);
-    console.log(`  ${'------'.padEnd(8)}${'------'.padStart(8)}${'---'.padStart(8)}${'---'.padStart(10)}${'--'.padStart(8)}`);
-    for (const sym of symbolsB.sort()) {
-      const r = b.perSymbol[sym];
-      if (r.totalTrades === 0) continue;
-      console.log(`  ${sym.padEnd(8)}${String(r.totalTrades).padStart(8)}${pct(r.winRate).padStart(8)}${gbp(r.netPnL).padStart(10)}${num(r.profitFactor).padStart(8)}`);
-    }
-  }
-
-  console.log(`\nCapital: £${a.initialCapital} | Risk: 10% equity/trade (min £20) | Scanner: top ${SCANNER_TOP_N} RVOL stocks/day | No slippage/commission`);
+  console.log(`\nCapital: £${a.initialCapital} | Risk: 10% equity/trade (min £20) | Scanner: top ${SCANNER_TOP_N} RVOL/day | No slippage/commission`);
 }
 
 // ─── Main ───
