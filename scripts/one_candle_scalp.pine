@@ -1,0 +1,128 @@
+//@version=6
+strategy("One Candle Scalp — Breakout & Retest", overlay=true, max_bars_back=500, default_qty_type=strategy.percent_of_equity, default_qty_value=10)
+
+// ─── Inputs ───
+showBox         = input.bool(true, "Show Opening Range Box", group="Display")
+showLabels      = input.bool(true, "Show Entry Labels", group="Display")
+tradingStart    = input.int(930, "Session Start (HHMM)", group="Session")
+tradingEnd      = input.int(1100, "Session End (HHMM)", group="Session")
+atrPctThreshold = input.float(20.0, "Manipulation Candle ATR %", minval=10, maxval=40, group="ATR Filter", tooltip="First 15-min candle range must be >= this % of daily ATR")
+useAtrFilter    = input.bool(true, "Require ATR Manipulation Filter", group="ATR Filter")
+
+// ─── Session helpers ───
+timeAllowed(t) =>
+    hhmm = hour(t) * 100 + minute(t)
+    hhmm >= tradingStart and hhmm < tradingEnd
+
+isSessionStart(t) =>
+    hhmm = hour(t) * 100 + minute(t)
+    hhmm == tradingStart
+
+// ─── 15-minute opening range tracking ───
+var int    barInOpening    = 0
+var bool   openingComplete = false
+var float  openRangeHigh   = na
+var float  openRangeLow    = na
+var float  openRangeOpen   = na
+
+if isSessionStart(time)
+    barInOpening    := 0
+    openingComplete := false
+    openRangeHigh   := high
+    openRangeLow    := low
+    openRangeOpen   := open
+    barInOpening    := 1
+else if not openingComplete and barInOpening > 0 and barInOpening < 3
+    openRangeHigh := math.max(openRangeHigh, high)
+    openRangeLow  := math.min(openRangeLow, low)
+    barInOpening  := barInOpening + 1
+    if barInOpening == 3
+        openingComplete := true
+
+// ─── ATR manipulation filter ───
+dailyATR  = request.security(syminfo.tickerid, "D", ta.atr(14))
+rangePct  = openRangeHigh - openRangeLow
+isManipulation = not na(dailyATR) and dailyATR > 0 and (rangePct / dailyATR) * 100 >= atrPctThreshold
+atrPass   = useAtrFilter ? (openingComplete and isManipulation) : openingComplete
+
+// ─── Previous Day High / Low ───
+pdh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdl = request.security(syminfo.tickerid, "D", low[1],  lookahead=barmerge.lookahead_on)
+
+// ─── VWAP bias ───
+bullBias = close > ta.vwap(hlc3)
+bearBias = close < ta.vwap(hlc3)
+
+// ─── State tracking ───
+var bool   brokeAbove     = false
+var bool   brokeBelow     = false
+var bool   longEntryReady = false
+var bool   shortEntryReady = false
+var bool   tradedToday    = false
+
+if isSessionStart(time)
+    brokeAbove      := false
+    brokeBelow      := false
+    longEntryReady  := false
+    shortEntryReady := false
+    tradedToday     := false
+
+// ─── Breakout detection ───
+if atrPass and not tradedToday and timeAllowed(time)
+    if not brokeAbove and close > openRangeHigh
+        brokeAbove     := true
+        longEntryReady := true
+    if not brokeBelow and close < openRangeLow
+        brokeBelow      := true
+        shortEntryReady := true
+
+// ─── Retest entry (Scarface model: breakout then pullback to level) ───
+longRetest  = brokeAbove  and longEntryReady  and low <= openRangeHigh and close > openRangeHigh and bullBias
+shortRetest = brokeBelow  and shortEntryReady and high >= openRangeLow and close < openRangeLow and bearBias
+
+// ─── John Wick / Power Tower candle detection at retest ───
+isHammer(o, h, l, c) =>
+    body = math.abs(c - o)
+    candleRange = h - l
+    candleRange > 0 ? (math.min(o, c) - l) / candleRange >= 0.6 : false
+
+isInvHammer(o, h, l, c) =>
+    body = math.abs(c - o)
+    candleRange = h - l
+    candleRange > 0 ? (h - math.max(o, c)) / candleRange >= 0.6 : false
+
+bullCandle = close > open
+bearCandle = close < open
+wickConfirmLong  = bullCandle and (isHammer(open, high, low, close) or bullCandle)
+wickConfirmShort = bearCandle and (isInvHammer(open, high, low, close) or bearCandle)
+
+// ─── Entries ───
+if longRetest and wickConfirmLong and not tradedToday and timeAllowed(time)
+    strategy.entry("Long", strategy.long)
+    strategy.exit("TP", "Long", stop=openRangeLow, limit=openRangeHigh + (openRangeHigh - openRangeLow) * 2)
+    longEntryReady  := false
+    tradedToday     := true
+    if showLabels
+        label.new(bar_index, low, "L", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+
+if shortRetest and wickConfirmShort and not tradedToday and timeAllowed(time)
+    strategy.entry("Short", strategy.short)
+    strategy.exit("TP", "Short", stop=openRangeHigh, limit=openRangeLow - (openRangeHigh - openRangeLow) * 2)
+    shortEntryReady := false
+    tradedToday     := true
+    if showLabels
+        label.new(bar_index, high, "S", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+
+// ─── Auto-close at session end ───
+if not timeAllowed(time) and strategy.position_size != 0
+    strategy.close_all(comment="Session End")
+
+// ─── Draw opening range box ───
+if showBox and openingComplete and isSessionStart(time[2])
+    box.new(bar_index - 2, openRangeHigh, bar_index + 20, openRangeLow, bgcolor=color.new(color.purple, 85), border_color=color.purple)
+    line.new(bar_index - 2, openRangeHigh, bar_index + 20, openRangeHigh, color=color.blue, style=line.style_dashed)
+    line.new(bar_index - 2, openRangeLow,  bar_index + 20, openRangeLow,  color=color.orange, style=line.style_dashed)
+
+// ─── PDH/PDL lines ───
+plot(pdh, "PDH", color=color.new(color.teal, 40), style=plot.style_stepline, linewidth=1)
+plot(pdl, "PDL", color=color.new(color.red, 40),  style=plot.style_stepline, linewidth=1)

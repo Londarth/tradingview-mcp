@@ -1,8 +1,6 @@
-# TradingView MCP Jackson
+# TradingView MCP
 
-If you found this from the YouTube video — welcome. This is the improved fork. Everything you need is below.
-
-Built on top of the original [tradingview-mcp](https://github.com/tradesdontlie/tradingview-mcp) by [@tradesdontlie](https://github.com/tradesdontlie). Full credit to them for the foundation. This fork adds a morning brief workflow, a rules config, and fixes the launch bug on TradingView Desktop v2.14+.
+Control TradingView Desktop from Claude Code via MCP, plus an autonomous Alpaca trading bot with Telegram notifications.
 
 > [!WARNING]
 > **Not affiliated with TradingView Inc. or Anthropic.** This tool connects to your locally running TradingView Desktop app via Chrome DevTools Protocol. Review the [Disclaimer](#disclaimer) before use.
@@ -15,40 +13,38 @@ Built on top of the original [tradingview-mcp](https://github.com/tradesdontlie/
 
 ---
 
-## What's New in This Fork
+## Two Systems
 
-| Feature | What it does |
-|---------|-------------|
-| `morning_brief` | One command that scans your watchlist, reads all your indicators, and returns structured data for Claude to generate your session bias |
-| `session_save` / `session_get` | Saves your daily brief to `~/.tradingview-mcp/sessions/` so you can compare today vs yesterday |
-| `rules.json` | Write your trading rules once — bias criteria, risk rules, watchlist. The morning brief applies them automatically every day |
-| Launch bug fix | Fixed `tv_launch` compatibility with TradingView Desktop v2.14+ |
-| `tv brief` CLI | Run your morning brief from the terminal in one word |
+| System | What it does |
+|--------|-------------|
+| **MCP Server** | 81 tools for controlling TradingView Desktop via CDP — chart manipulation, Pine Script, data reading, drawing, alerts, replay, UI automation |
+| **Alpaca Bot** | Autonomous trading bot implementing the "One Candle Scalp" opening range breakout strategy via Alpaca's API, with Telegram trade notifications |
 
 ---
 
-## One-Shot Setup
-
-Paste this into Claude Code and it will handle everything:
+## Architecture
 
 ```
-Set up TradingView MCP Jackson for me. 
-Clone https://github.com/LewisWJackson/tradingview-mcp-jackson.git to ~/tradingview-mcp-jackson, run npm install, then add it to my MCP config at ~/.claude/.mcp.json (merge with any existing servers, don't overwrite them). 
-The config block is: { "mcpServers": { "tradingview": { "command": "node", "args": ["/Users/YOUR_USERNAME/tradingview-mcp-jackson/src/server.js"] } } } — replace YOUR_USERNAME with my actual username.
-Then copy rules.example.json to rules.json and open it so I can fill in my trading rules.
-Finally restart and verify with tv_health_check.
+Claude Code ←→ MCP Server (stdio) ←→ CDP (localhost:9222) ←→ TradingView Desktop (Electron)
+
+Alpaca Bot (standalone) ←→ Alpaca API (REST + WebSocket) ←→ Market data + order execution
+                              ←→ Telegram Bot API ←→ Trade notifications
 ```
 
-Or follow the manual steps below.
+### MCP Server Layers
 
----
+- **`connection.js`** — CDP client. Connects to `localhost:9222`, discovers TradingView tab, injects JS via `Runtime.evaluate()`. Caches client, reconnects on failure.
+- **`core/`** — Pure business logic. No MCP imports. Plain JS objects in/out. Can be imported independently via `import { chart } from 'tradingview-mcp/core'`.
+- **`tools/`** — MCP registration layer. Zod schemas, wraps `core/` functions, registers on `McpServer`. Shared `jsonResult()` helper in `_format.js`.
+- **`cli/`** — Terminal interface. `tv` command with subcommands. Wraps `core/` functions with arg parsing.
 
-## Prerequisites
+All chart manipulation works by constructing JS strings that access `window.TradingViewApi` internal paths, then evaluating them in the TradingView page context.
 
-- **TradingView Desktop app** (paid subscription required for real-time data)
-- **Node.js 18+**
-- **Claude Code** (for MCP tools) or any terminal (for CLI)
-- **macOS, Windows, or Linux**
+### Alpaca Bot
+
+- **`scripts/alpaca-bot.js`** — Main bot. Subscribes to Alpaca's real-time 5-min bar stream, implements opening range breakout strategy, places bracket orders.
+- **`scripts/telegram.js`** — Sends formatted HTML messages via Telegram Bot API (trade signals, morning brief, EOD summary, errors).
+- **`scripts/alpaca-config.json`** — Strategy parameters, symbol list, risk settings, dry-run toggle.
 
 ---
 
@@ -57,8 +53,8 @@ Or follow the manual steps below.
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/LewisWJackson/tradingview-mcp-jackson.git ~/tradingview-mcp-jackson
-cd ~/tradingview-mcp-jackson
+git clone https://github.com/Londarth/tradingview-mcp.git ~/tradingview-mcp
+cd ~/tradingview-mcp
 npm install
 ```
 
@@ -103,7 +99,7 @@ Add to `~/.claude/.mcp.json` (merge with any existing servers):
   "mcpServers": {
     "tradingview": {
       "command": "node",
-      "args": ["/Users/YOUR_USERNAME/tradingview-mcp-jackson/src/server.js"]
+      "args": ["/Users/YOUR_USERNAME/tradingview-mcp/src/server.js"]
     }
   }
 }
@@ -115,84 +111,9 @@ Replace `YOUR_USERNAME` with your actual username. On Mac: `echo $USER` to check
 
 Restart Claude Code, then ask: *"Use tv_health_check to verify TradingView is connected"*
 
-### 6. Run your first morning brief
-
-Ask Claude: *"Run morning_brief and give me my session bias"*
-
-Or from the terminal:
-```bash
-npm link  # install tv CLI globally (one time)
-tv brief
-```
-
 ---
 
-## Morning Brief Workflow
-
-This is the feature that turns this from a toolkit into a daily habit.
-
-**Before every session:**
-
-1. TradingView is open (launched with debug port)
-2. Run: `tv brief` in your terminal (or ask Claude: *"run morning_brief"*)
-3. Claude scans every symbol in your watchlist, reads your indicator values, applies your `rules.json` criteria, and prints:
-
-```
-BTCUSD  | BIAS: Bearish  | KEY LEVEL: 94,200  | WATCH: RSI crossing 50 on 4H
-ETHUSD  | BIAS: Neutral  | KEY LEVEL: 3,180   | WATCH: Ribbon direction on daily
-SOLUSD  | BIAS: Bullish  | KEY LEVEL: 178.50  | WATCH: Hold above 20 EMA
-
-Overall: Cautious session. BTC leading bearish, SOL the exception — watch for divergence.
-```
-
-4. Save it: *"save this brief"* (uses `session_save`)
-5. Next morning, compare: *"get yesterday's session"* (uses `session_get`)
-
----
-
-## What This Tool Does
-
-- **Morning brief** — scan watchlist, read indicators, apply your rules, print session bias
-- **Pine Script development** — write, inject, compile, debug scripts with AI
-- **Chart navigation** — change symbols, timeframes, zoom to dates, add/remove indicators
-- **Visual analysis** — read indicator values, price levels, drawn levels from custom indicators
-- **Draw on charts** — trend lines, horizontal levels, rectangles, text
-- **Manage alerts** — create, list, delete price alerts
-- **Replay practice** — step through historical bars, practice entries and exits with P&L tracking
-- **Screenshots** — capture chart state
-- **Multi-pane layouts** — 2x2, 3x1 grids with different symbols per pane
-- **Stream data** — JSONL output from your live chart for monitoring scripts
-- **CLI access** — every tool is also a `tv` command, pipe-friendly JSON output
-
----
-
-## How Claude Knows Which Tool to Use
-
-Claude reads `CLAUDE.md` automatically when working in this project. It contains the full decision tree.
-
-| You say... | Claude uses... |
-|------------|---------------|
-| "Run my morning brief" | `morning_brief` → apply rules → `session_save` |
-| "What was my bias yesterday?" | `session_get` |
-| "What's on my chart?" | `chart_get_state` → `data_get_study_values` → `quote_get` |
-| "Give me a full analysis" | `quote_get` → `data_get_study_values` → `data_get_pine_lines` → `data_get_pine_labels` → `capture_screenshot` |
-| "Switch to BTCUSD daily" | `chart_set_symbol` → `chart_set_timeframe` |
-| "Write a Pine Script for..." | `pine_set_source` → `pine_smart_compile` → `pine_get_errors` |
-| "Start replay at March 1st" | `replay_start` → `replay_step` → `replay_trade` |
-| "Set up a 4-chart grid" | `pane_set_layout` → `pane_set_symbol` |
-| "Draw a level at 94200" | `draw_shape` (horizontal_line) |
-
----
-
-## Tool Reference (81 MCP tools)
-
-### Morning Brief (new in this fork)
-
-| Tool | What it does |
-|------|-------------|
-| `morning_brief` | Scan watchlist, read indicators, return structured data for session bias. Reads `rules.json` automatically. |
-| `session_save` | Save the generated brief to `~/.tradingview-mcp/sessions/YYYY-MM-DD.json` |
-| `session_get` | Retrieve today's brief (or yesterday's if today not saved yet) |
+## MCP Server — Tool Reference (81 tools)
 
 ### Chart Reading
 
@@ -239,6 +160,14 @@ Read `line.new()`, `label.new()`, `table.new()`, `box.new()` output from any vis
 | `pine_analyze` | Offline static analysis (no chart needed) |
 | `pine_check` | Server-side compile check (no chart needed) |
 
+### Morning Brief
+
+| Tool | What it does |
+|------|-------------|
+| `morning_brief` | Scan watchlist, read indicators, return structured data for session bias. Reads `rules.json` automatically. |
+| `session_save` | Save the generated brief to `~/.tradingview-mcp/sessions/YYYY-MM-DD.json` |
+| `session_get` | Retrieve today's brief (or yesterday's if today not saved yet) |
+
 ### Replay Mode
 
 | Tool | Step |
@@ -262,6 +191,57 @@ Read `line.new()`, `label.new()`, `table.new()`, `box.new()` output from any vis
 | `watchlist_get` / `watchlist_add` | Read/modify watchlist |
 | `capture_screenshot` | Screenshot (regions: full, chart, strategy_tester) |
 | `tv_launch` / `tv_health_check` | Launch TradingView and verify connection |
+
+### Tool Decision Tree
+
+| You say... | Claude uses... |
+|------------|----------------|
+| "Run my morning brief" | `morning_brief` → apply rules → `session_save` |
+| "What's on my chart?" | `chart_get_state` → `data_get_study_values` → `quote_get` |
+| "Give me a full analysis" | `quote_get` → `data_get_study_values` → `data_get_pine_lines` → `data_get_pine_labels` → `capture_screenshot` |
+| "Switch to BTCUSD daily" | `chart_set_symbol` → `chart_set_timeframe` |
+| "Write a Pine Script for..." | `pine_set_source` → `pine_smart_compile` → `pine_get_errors` |
+| "Start replay at March 1st" | `replay_start` → `replay_step` → `replay_trade` |
+| "Set up a 4-chart grid" | `pane_set_layout` → `pane_set_symbol` |
+| "Draw a level at 94200" | `draw_shape` (horizontal_line) |
+
+---
+
+## Alpaca Trading Bot
+
+Autonomous bot that implements the "One Candle Scalp" opening range breakout strategy on 5-minute charts.
+
+### Strategy logic
+
+1. Track the 15-minute opening range (3 bars on 5m chart, 9:30–9:40 ET)
+2. Wait for a breakout above/below the range
+3. Enter on the retest (pullback to the breakout level) with VWAP confirmation + wick confirmation
+4. Bracket order: SL below the range, TP at 2x the range size
+5. Close at session end (11:00 ET) or when TP/SL is hit
+
+### Pine Script strategies
+
+Two versions included in `scripts/`:
+
+| File | Description |
+|------|-------------|
+| `one_candle_scalp.pine` | V1 — Basic breakout + retest with ATR filter |
+| `one_candle_scalp_v2.pine` | V2 — Adds RVOL filter, range width filter, 1H trend filter, max trades/day |
+
+### Setup
+
+1. Copy `.env.example` to `.env` and fill in your Alpaca + Telegram credentials
+2. Edit `scripts/alpaca-config.json` for your symbols, session times, and risk settings
+3. Start in dry-run mode (default): `node scripts/alpaca-bot.js`
+4. Or use the `/scalp-bot` skill in Claude Code: `start`, `stop`, `status`, `dry-run`
+
+### Configuration
+
+| File | Purpose |
+|------|---------|
+| `.env` | `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `ALPACA_PAPER`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (gitignored) |
+| `scripts/alpaca-config.json` | Strategy params: symbols, session times, ATR/RVOL thresholds, risk settings, dryRun toggle |
+| `rules.json` | Watchlist, bias criteria, risk rules for morning brief |
 
 ---
 
@@ -295,29 +275,8 @@ Full command list: `tv --help`
 | MCP server not showing in Claude Code | Check `~/.claude/.mcp.json` syntax, restart Claude Code |
 | `tv` command not found | Run `npm link` from the project directory |
 | `morning_brief` — "No rules.json found" | Run `cp rules.example.json rules.json` and fill it in |
-| `morning_brief` — watchlist empty | Add symbols to the `watchlist` array in `rules.json` |
 | Tools return stale data | TradingView still loading — wait a few seconds |
 | Pine Editor tools fail | Open Pine Editor panel first: `ui_open_panel pine-editor open` |
-
----
-
-## Architecture
-
-```
-Claude Code  ←→  MCP Server (stdio)  ←→  CDP (port 9222)  ←→  TradingView Desktop (Electron)
-```
-
-- **78 original tools** + **3 morning brief tools** = 81 MCP tools total
-- **Transport**: MCP over stdio + CLI (`tv` command)
-- **Connection**: Chrome DevTools Protocol on localhost:9222
-- **No external network calls** — everything runs locally
-- **Zero extra dependencies** beyond the original
-
----
-
-## Credits
-
-This fork is built on [tradingview-mcp](https://github.com/tradesdontlie/tradingview-mcp) by [@tradesdontlie](https://github.com/tradesdontlie). The original tool is the foundation — go star their repo.
 
 ---
 

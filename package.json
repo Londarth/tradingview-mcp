@@ -1,7 +1,16 @@
 {
   "name": "tradingview-mcp",
   "version": "1.0.0",
-  "description": "MCP bridge for TradingView Desktop via Chrome DevTools Protocol",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Londarth/tradingview-mcp.git"
+  },
+  "author": "Londarth",
+  "bugs": {
+    "url": "https://github.com/Londarth/tradingview-mcp/issues"
+  },
+  "homepage": "https://github.com/Londarth/tradingview-mcp",
+  "description": "TradingView Desktop control via MCP + autonomous Alpaca trading bot",
   "type": "module",
   "main": "src/server.js",
   "bin": {
