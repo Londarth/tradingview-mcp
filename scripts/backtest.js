@@ -2,9 +2,10 @@
 import 'dotenv/config';
 
 const SCANNER_UNIVERSE = [
-  'AAPL', 'AMD', 'AMZN', 'BABA', 'CCL', 'COIN', 'DAL', 'DIS', 'F', 'GM', 'GOOGL',
-  'INTC', 'JPM', 'KEYS', 'MARA', 'META', 'MSFT', 'MU', 'NFLX', 'NKE', 'NVDA', 'PLTR', 'PYPL',
-  'RIVN', 'SBUX', 'SNAP', 'SOFI', 'SPOT', 'SQ', 'TSLA', 'UBER', 'WBD', 'Z',
+  // Proven winners from training (PF > 1.5)
+  'SOFI', 'INTC', 'Z', 'DAL', 'RIVN', 'SBUX', 'CCL',
+  // Similar profile: cheap-mid range, moderate volatility
+  'DIS', 'F', 'GM', 'KEYS', 'MU', 'PLTR', 'SNAP',
 ];
 const SCANNER_TOP_N = 5;
 
@@ -541,7 +542,7 @@ async function runScannerMode(startDate, endDate) {
 
   // Run Aziz ORB+VWAP only on scanner-selected symbols
   const configA = {
-    sessionEnd: 1130, riskPct: 10, minPositionGBP: 20, initialCapital: 200,
+    sessionEnd: 1130, riskPct: 25, minPositionGBP: 50, initialCapital: 200,
     useAtrFilter: true,
     useRvolFilter: true, rvolThreshold: 1.5, volumeMALength: 12,
     targetR: 2.0,
