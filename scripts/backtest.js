@@ -2,8 +2,8 @@
 import 'dotenv/config';
 
 const SCANNER_UNIVERSE = [
-  'AAPL', 'AMD', 'AMZN', 'BABA', 'COIN', 'DAL', 'DIS', 'F', 'GM', 'GOOGL',
-  'INTC', 'JPM', 'MARA', 'META', 'MSFT', 'MU', 'NFLX', 'NVDA', 'PLTR', 'PYPL',
+  'AAPL', 'AMD', 'AMZN', 'BABA', 'CCL', 'COIN', 'DAL', 'DIS', 'F', 'GM', 'GOOGL',
+  'INTC', 'JPM', 'KEYS', 'MARA', 'META', 'MSFT', 'MU', 'NFLX', 'NKE', 'NVDA', 'PLTR', 'PYPL',
   'RIVN', 'SBUX', 'SNAP', 'SOFI', 'SPOT', 'SQ', 'TSLA', 'UBER', 'WBD', 'Z',
 ];
 const SCANNER_TOP_N = 5;
@@ -150,21 +150,35 @@ function computeScannerSelections(allBars5m, allDailyATRMaps) {
     const dailyATRMap = allDailyATRMaps[symbol];
     if (!dailyATRMap) continue;
 
+    let prevDayClose = null;
+    let lastClose = null;
+    let prevDate = null;
+
     for (const bar of bars) {
       smaVolume.push(bar.volume);
+      const dateStr = getDateStr(bar.ts);
       const hhmm = getHHMM_ET(bar.ts);
+
+      // Track previous day's close for overnight gap
+      if (prevDate && prevDate !== dateStr) {
+        prevDayClose = lastClose;
+      }
+      lastClose = bar.close;
+      prevDate = dateStr;
+
       if (hhmm !== 930 || !smaVolume.ready()) continue;
 
       const volMA = smaVolume.value();
       if (!volMA || volMA <= 0) continue;
 
       const rvol = bar.volume / volMA;
-      const dateStr = getDateStr(bar.ts);
       const dailyATR = dailyATRMap.get(dateStr) || 0;
       const price = bar.close;
 
-      // Filter: price < $200 and ATR > $1
-      if (price >= 200 || dailyATR <= 1) continue;
+      // Filter: price < $100, ATR > $0.50, ATR < 5% of price, overnight gap < 3%
+      const gapPct = prevDayClose !== null ? Math.abs(bar.open - prevDayClose) / prevDayClose * 100 : 999;
+      const atrPct = dailyATR > 0 ? dailyATR / price * 100 : 0;
+      if (price >= 100 || dailyATR <= 0.5 || atrPct >= 5 || gapPct >= 3) continue;
 
       if (!dayRankings.has(dateStr)) dayRankings.set(dateStr, []);
       dayRankings.get(dateStr).push({ symbol, rvol, price, atr: dailyATR });
