@@ -11,9 +11,9 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 const TG_API = `https://api.telegram.org/bot${TG_TOKEN}`;
-const BOT_NAME = 'scalp-bot';
+const BOT_NAME = 'touch-turn';
 const CONFIG_PATH = join(__dirname, 'alpaca-config.json');
-const LOG_PATH = join(__dirname, 'trade-log.json');
+const LOG_PATH = join(__dirname, 'touch-turn-log.json');
 
 let lastUpdateId = 0;
 
@@ -56,8 +56,7 @@ function pm2(cmd) {
 
 async function getBotStatus() {
   try {
-    const { stdout } = await pm2('describe alpaca-bot');
-    // Extract status from pm2 describe output
+    const { stdout } = await pm2('describe touch-turn-bot');
     const statusMatch = stdout.match(/status\s*│\s*(\w+)/);
     const uptimeMatch = stdout.match(/uptime\s*│\s*(.+)/);
     return {
@@ -93,14 +92,8 @@ async function readConfig() {
 
 async function handleStart() {
   try {
-    await pm2('start ecosystem.config.cjs');
-    const config = await readConfig();
-    const mode = config.dryRun ? 'DRY RUN' : 'LIVE';
-    const paper = process.env.ALPACA_PAPER !== 'false' ? 'PAPER' : 'LIVE';
-    const symbols = config.symbols?.join(', ') || 'unknown';
-    await sendTelegram(
-      `🚀 <b>Bot started</b>\nMode: ${paper} ${mode}\nSymbols: ${symbols}\nSession: ${config.strategy?.sessionStart || '9:30'}–${config.strategy?.sessionEnd || '11:00'} ET`
-    );
+    await pm2('start ecosystem.config.cjs --only touch-turn-bot');
+    await sendTelegram('⚡️ <b>Touch &amp; Turn Bot started</b>\nMode: PAPER\nWindow: 9:45–11:00 ET');
   } catch (err) {
     await sendTelegram(`❌ Failed to start bot: ${err.message}`);
   }
@@ -108,34 +101,30 @@ async function handleStart() {
 
 async function handleStop() {
   try {
-    await pm2('stop alpaca-bot');
-    await sendTelegram('🛑 <b>Bot stopped</b>');
+    await pm2('stop touch-turn-bot');
+    await sendTelegram('🛑 <b>Touch &amp; Turn Bot stopped</b>');
   } catch (err) {
     await sendTelegram(`❌ Failed to stop bot: ${err.message}`);
   }
 }
 
 async function handleStatus() {
-  const [botStatus, tradeLog, config] = await Promise.all([
+  const [botStatus, tradeLog] = await Promise.all([
     getBotStatus(),
     readTradeLog(),
-    readConfig(),
   ]);
 
-  let msg = botStatus.online ? '🟢 <b>Bot is running</b>' : '🔴 <b>Bot is stopped</b>';
+  let msg = botStatus.online ? '🟢 <b>Touch &amp; Turn Bot is running</b>' : '🔴 <b>Bot is stopped</b>';
   if (botStatus.online) {
     const paper = process.env.ALPACA_PAPER !== 'false' ? 'PAPER' : 'LIVE';
-    const mode = config.dryRun ? 'DRY RUN' : 'LIVE';
-    const symbols = config.symbols?.join(', ') || 'unknown';
-    msg += `\nMode: ${paper} ${mode}`;
-    msg += `\nSymbols: ${symbols}`;
+    msg += `\nMode: ${paper}`;
     msg += `\nUptime: ${botStatus.uptime}`;
   }
 
   if (tradeLog.length > 0) {
     msg += '\n\n<b>Recent activity:</b>';
-    for (const entry of tradeLog) {
-      const prefix = { info: 'ℹ️', trade: '📊', signal: '🔔', error: '❌', win: '✅', loss: '🛑' }[entry.type] || '·';
+    for (const entry of tradeLog.slice(-10)) {
+      const prefix = entry.level === 'error' ? '❌' : entry.level === 'trade' ? '📊' : 'ℹ️';
       msg += `\n${prefix} ${entry.msg}`;
     }
   } else {
