@@ -404,7 +404,7 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
   const equityCurve = [equity];
 
   function calcQty() {
-    const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionGBP || 20);
+    const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionUSD || 20);
     return positionValue / (position ? position.entryPrice : 1);
   }
 
@@ -445,7 +445,7 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
         sessionVWAP, smaVolume, atr5m, rsi14, dailyATRMap, config,
       });
       if (signal.action === 'enter') {
-        const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionGBP || 20);
+        const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionUSD || 20);
         const qty = positionValue / bar.close;
         position = {
           side: signal.side, entryPrice: bar.close,
@@ -460,7 +460,7 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
   // Force-close at end of data
   if (position) {
     const lastBar = bars[bars.length - 1];
-    const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionGBP || 20);
+    const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionUSD || 20);
     const qty = positionValue / position.entryPrice;
     const pnl = (lastBar.close - position.entryPrice) * qty * (position.side === 'short' ? -1 : 1);
     equity += pnl;
@@ -493,7 +493,7 @@ function computeStats(trades, initialCapital, equityCurve, maxDrawdown) {
 // ─── Reporting ───
 
 function printReport(a, b, c, symbol, startDate, endDate) {
-  const gbp = v => (v >= 0 ? '+' : '') + '£' + v.toFixed(2);
+  const usd = v => (v >= 0 ? '+' : '') + '$' + v.toFixed(2);
   const pct = v => v.toFixed(1) + '%';
   const num = v => v.toFixed(2);
 
@@ -507,10 +507,10 @@ function printReport(a, b, c, symbol, startDate, endDate) {
   console.log(`${'Wins'.padEnd(22)}${String(a.wins).padStart(18)}${String(b.wins).padStart(18)}${String(c.wins).padStart(18)}`);
   console.log(`${'Losses'.padEnd(22)}${String(a.losses).padStart(18)}${String(b.losses).padStart(18)}${String(c.losses).padStart(18)}`);
   console.log(`${'Win Rate'.padEnd(22)}${pct(a.winRate).padStart(18)}${pct(b.winRate).padStart(18)}${pct(c.winRate).padStart(18)}`);
-  console.log(`${'Net P&L'.padEnd(22)}${gbp(a.netPnL).padStart(18)}${gbp(b.netPnL).padStart(18)}${gbp(c.netPnL).padStart(18)}`);
-  console.log(`${'Final Equity'.padEnd(22)}${gbp(a.finalEquity).padStart(18)}${gbp(b.finalEquity).padStart(18)}${gbp(c.finalEquity).padStart(18)}`);
-  console.log(`${'Avg Win'.padEnd(22)}${gbp(a.avgWin).padStart(18)}${gbp(b.avgWin).padStart(18)}${gbp(c.avgWin).padStart(18)}`);
-  console.log(`${'Avg Loss'.padEnd(22)}${gbp(a.avgLoss).padStart(18)}${gbp(b.avgLoss).padStart(18)}${gbp(c.avgLoss).padStart(18)}`);
+  console.log(`${'Net P&L'.padEnd(22)}${usd(a.netPnL).padStart(18)}${usd(b.netPnL).padStart(18)}${usd(c.netPnL).padStart(18)}`);
+  console.log(`${'Final Equity'.padEnd(22)}${usd(a.finalEquity).padStart(18)}${usd(b.finalEquity).padStart(18)}${usd(c.finalEquity).padStart(18)}`);
+  console.log(`${'Avg Win'.padEnd(22)}${usd(a.avgWin).padStart(18)}${usd(b.avgWin).padStart(18)}${usd(c.avgWin).padStart(18)}`);
+  console.log(`${'Avg Loss'.padEnd(22)}${usd(a.avgLoss).padStart(18)}${usd(b.avgLoss).padStart(18)}${usd(c.avgLoss).padStart(18)}`);
   console.log(`${'Max Drawdown'.padEnd(22)}${pct(a.maxDrawdown).padStart(18)}${pct(b.maxDrawdown).padStart(18)}${pct(c.maxDrawdown).padStart(18)}`);
   console.log(`${'Profit Factor'.padEnd(22)}${num(a.profitFactor).padStart(18)}${num(b.profitFactor).padStart(18)}${num(c.profitFactor).padStart(18)}`);
   console.log('-'.repeat(76));
@@ -520,7 +520,7 @@ function printReport(a, b, c, symbol, startDate, endDate) {
   printTradeLog('TOUCH & TURN', c.trades, c.initialCapital);
 
   console.log('');
-  console.log(`Capital: £${a.initialCapital} | Risk: 10% equity/trade (min £20) | No slippage/commission`);
+  console.log(`Capital: $${a.initialCapital} | Risk: 50% equity/trade (min $100) | No slippage/commission`);
 }
 
 function printTradeLog(name, trades, initialCapital) {
@@ -538,8 +538,8 @@ function printTradeLog(name, trades, initialCapital) {
     runningEquity += t.pnl;
     const side = t.side === 'long' ? 'LONG' : 'SHORT';
     const exitType = t.exitType === 'target' ? 'TP' : t.exitType === 'stop' ? 'SL' : t.exitType === 'session_end' ? 'EOD' : 'END';
-    const pnlStr = (t.pnl >= 0 ? '+' : '') + '£' + t.pnl.toFixed(2);
-    console.log(`  ${t.entryDate.padEnd(12)}${side.padEnd(7)}${t.entryPrice.toFixed(2).padEnd(10)}${t.exitPrice.toFixed(2).padEnd(10)}${exitType.padEnd(14)}${pnlStr.padStart(9)}${('£' + runningEquity.toFixed(2)).padStart(10)}`);
+    const pnlStr = (t.pnl >= 0 ? '+' : '') + '$' + t.pnl.toFixed(2);
+    console.log(`  ${t.entryDate.padEnd(12)}${side.padEnd(7)}${t.entryPrice.toFixed(2).padEnd(10)}${t.exitPrice.toFixed(2).padEnd(10)}${exitType.padEnd(14)}${pnlStr.padStart(9)}${('$' + runningEquity.toFixed(2)).padStart(10)}`);
   }
 }
 
@@ -618,14 +618,14 @@ async function runScannerMode(startDate, endDate) {
 
   // Run Aziz ORB+VWAP only on scanner-selected symbols
   const configA = {
-    sessionEnd: 1130, riskPct: 25, minPositionGBP: 50, initialCapital: 200,
+    sessionEnd: 1130, riskPct: 50, minPositionUSD: 100, initialCapital: 200,
     useAtrFilter: true,
     useRvolFilter: true, rvolThreshold: 1.5, volumeMALength: 12,
     targetR: 2.0,
   };
 
   const configC = {
-    sessionEnd: 1130, riskPct: 25, minPositionGBP: 50, initialCapital: 200,
+    sessionEnd: 1130, riskPct: 50, minPositionUSD: 100, initialCapital: 200,
     useAtrFilter: true, atrPctThreshold: 0.25,
   };
 
@@ -649,7 +649,7 @@ async function runScannerMode(startDate, endDate) {
 }
 
 function printScannerReport(a, c, startDate, endDate) {
-  const gbp = v => (v >= 0 ? '+' : '') + '£' + v.toFixed(2);
+  const usd = v => (v >= 0 ? '+' : '') + '$' + v.toFixed(2);
   const pct = v => v.toFixed(1) + '%';
   const num = v => v.toFixed(2);
 
@@ -663,8 +663,8 @@ function printScannerReport(a, c, startDate, endDate) {
   console.log(`${'Wins'.padEnd(22)}${String(a.wins).padStart(18)}${String(c.wins).padStart(18)}`);
   console.log(`${'Losses'.padEnd(22)}${String(a.losses).padStart(18)}${String(c.losses).padStart(18)}`);
   console.log(`${'Win Rate'.padEnd(22)}${pct(a.winRate).padStart(18)}${pct(c.winRate).padStart(18)}`);
-  console.log(`${'Net P&L'.padEnd(22)}${gbp(a.netPnL).padStart(18)}${gbp(c.netPnL).padStart(18)}`);
-  console.log(`${'Final Equity'.padEnd(22)}${gbp(a.finalEquity).padStart(18)}${gbp(c.finalEquity).padStart(18)}`);
+  console.log(`${'Net P&L'.padEnd(22)}${usd(a.netPnL).padStart(18)}${usd(c.netPnL).padStart(18)}`);
+  console.log(`${'Final Equity'.padEnd(22)}${usd(a.finalEquity).padStart(18)}${usd(c.finalEquity).padStart(18)}`);
   console.log(`${'Max Drawdown'.padEnd(22)}${pct(a.maxDrawdown).padStart(18)}${pct(c.maxDrawdown).padStart(18)}`);
   console.log(`${'Profit Factor'.padEnd(22)}${num(a.profitFactor).padStart(18)}${num(c.profitFactor).padStart(18)}`);
   console.log('-'.repeat(58));
@@ -678,11 +678,11 @@ function printScannerReport(a, c, startDate, endDate) {
     console.log(`  ${'------'.padEnd(8)}${'------'.padStart(8)}${'---'.padStart(8)}${'---'.padStart(10)}${'--'.padStart(8)}`);
     for (const sym of symbols.sort()) {
       const r = data.perSymbol[sym];
-      console.log(`  ${sym.padEnd(8)}${String(r.totalTrades).padStart(8)}${pct(r.winRate).padStart(8)}${gbp(r.netPnL).padStart(10)}${num(r.profitFactor).padStart(8)}`);
+      console.log(`  ${sym.padEnd(8)}${String(r.totalTrades).padStart(8)}${pct(r.winRate).padStart(8)}${usd(r.netPnL).padStart(10)}${num(r.profitFactor).padStart(8)}`);
     }
   }
 
-  console.log(`\nCapital: £${a.initialCapital} | Risk: 25% equity/trade (min £50) | Scanner: top ${SCANNER_TOP_N} RVOL/day | No slippage/commission`);
+  console.log(`\nCapital: $${a.initialCapital} | Risk: 50% equity/trade (min $100) | Scanner: top ${SCANNER_TOP_N} RVOL/day | No slippage/commission`);
 }
 
 // ─── Main ───
@@ -714,14 +714,14 @@ async function main() {
   console.log(`  Got ${dailyBars.length} daily bars, ATR map: ${dailyATRMap.size} dates`);
 
   const configA = {
-    sessionEnd: 1130, riskPct: 10, minPositionGBP: 20, initialCapital: 200,
+    sessionEnd: 1130, riskPct: 50, minPositionUSD: 100, initialCapital: 200,
     useAtrFilter: true,
     useRvolFilter: true, rvolThreshold: 1.5, volumeMALength: 12,
     targetR: 2.0,
   };
 
   const configB = {
-    sessionEnd: 1130, riskPct: 10, minPositionGBP: 20, initialCapital: 200,
+    sessionEnd: 1130, riskPct: 50, minPositionUSD: 100, initialCapital: 200,
     atrDistMult: 1.0, stopAtrMult: 0.5,
     useRsiFilter: true, rsiMaxLong: 70, rsiMinShort: 30,
     useVolFilter: true, volumeMALength: 12,
@@ -729,7 +729,7 @@ async function main() {
   };
 
   const configC = {
-    sessionEnd: 1130, riskPct: 10, minPositionGBP: 20, initialCapital: 200,
+    sessionEnd: 1130, riskPct: 50, minPositionUSD: 100, initialCapital: 200,
     useAtrFilter: true, atrPctThreshold: 0.25,
   };
 

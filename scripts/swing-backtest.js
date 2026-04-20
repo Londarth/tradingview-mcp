@@ -312,7 +312,7 @@ function runSwingBacktest(bars, processBarFn, stateInitFn, config, startDate) {
     if (!position && barDate >= startDate) {
       const signal = processBarFn(bar, state, ind);
       if (signal.action === 'enter') {
-        const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionGBP || 25);
+        const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionUSD || 25);
         const qty = positionValue / bar.close;
         position = {
           side: signal.side, entryPrice: bar.close,
@@ -365,7 +365,7 @@ function computeStats(trades, initialCapital, equityCurve, maxDrawdown) {
 // ─── Reporting ───
 
 function printSwingReport(results, symbol, startDate, endDate) {
-  const gbp = v => (v >= 0 ? '+' : '') + '£' + v.toFixed(2);
+  const usd = v => (v >= 0 ? '+' : '') + '$' + v.toFixed(2);
   const pct = v => v.toFixed(1) + '%';
   const num = v => v.toFixed(2);
 
@@ -381,10 +381,10 @@ function printSwingReport(results, symbol, startDate, endDate) {
   console.log(`${'Wins'.padEnd(22)}${String(crsi2.wins).padStart(16)}${String(ibs.wins).padStart(16)}${String(fb.wins).padStart(16)}`);
   console.log(`${'Losses'.padEnd(22)}${String(crsi2.losses).padStart(16)}${String(ibs.losses).padStart(16)}${String(fb.losses).padStart(16)}`);
   console.log(`${'Win Rate'.padEnd(22)}${pct(crsi2.winRate).padStart(16)}${pct(ibs.winRate).padStart(16)}${pct(fb.winRate).padStart(16)}`);
-  console.log(`${'Net P&L'.padEnd(22)}${gbp(crsi2.netPnL).padStart(16)}${gbp(ibs.netPnL).padStart(16)}${gbp(fb.netPnL).padStart(16)}`);
-  console.log(`${'Final Equity'.padEnd(22)}${gbp(crsi2.finalEquity).padStart(16)}${gbp(ibs.finalEquity).padStart(16)}${gbp(fb.finalEquity).padStart(16)}`);
-  console.log(`${'Avg Win'.padEnd(22)}${gbp(crsi2.avgWin).padStart(16)}${gbp(ibs.avgWin).padStart(16)}${gbp(fb.avgWin).padStart(16)}`);
-  console.log(`${'Avg Loss'.padEnd(22)}${gbp(crsi2.avgLoss).padStart(16)}${gbp(ibs.avgLoss).padStart(16)}${gbp(fb.avgLoss).padStart(16)}`);
+  console.log(`${'Net P&L'.padEnd(22)}${usd(crsi2.netPnL).padStart(16)}${usd(ibs.netPnL).padStart(16)}${usd(fb.netPnL).padStart(16)}`);
+  console.log(`${'Final Equity'.padEnd(22)}${usd(crsi2.finalEquity).padStart(16)}${usd(ibs.finalEquity).padStart(16)}${usd(fb.finalEquity).padStart(16)}`);
+  console.log(`${'Avg Win'.padEnd(22)}${usd(crsi2.avgWin).padStart(16)}${usd(ibs.avgWin).padStart(16)}${usd(fb.avgWin).padStart(16)}`);
+  console.log(`${'Avg Loss'.padEnd(22)}${usd(crsi2.avgLoss).padStart(16)}${usd(ibs.avgLoss).padStart(16)}${usd(fb.avgLoss).padStart(16)}`);
   console.log(`${'Max Drawdown'.padEnd(22)}${pct(crsi2.maxDrawdown).padStart(16)}${pct(ibs.maxDrawdown).padStart(16)}${pct(fb.maxDrawdown).padStart(16)}`);
   console.log(`${'Profit Factor'.padEnd(22)}${num(crsi2.profitFactor).padStart(16)}${num(ibs.profitFactor).padStart(16)}${num(fb.profitFactor).padStart(16)}`);
   console.log('-'.repeat(70));
@@ -394,7 +394,7 @@ function printSwingReport(results, symbol, startDate, endDate) {
   printSwingTradeLog('FAIL BREAKOUT', fb.trades, fb.initialCapital);
 
   console.log('');
-  console.log(`Capital: £${crsi2.initialCapital} | Risk: ${crsi2.initialCapital * 0.15 / crsi2.initialCapital * 100}% equity/trade (min £25) | Daily bars | No slippage/commission`);
+  console.log(`Capital: $${crsi2.initialCapital} | Risk: ${crsi2.initialCapital * 0.15 / crsi2.initialCapital * 100}% equity/trade (min $25) | Daily bars | No slippage/commission`);
 }
 
 function printSwingTradeLog(name, trades, initialCapital) {
@@ -412,8 +412,8 @@ function printSwingTradeLog(name, trades, initialCapital) {
     runningEquity += t.pnl;
     const side = t.side === 'long' ? 'LONG' : 'SHORT';
     const exitType = t.exitType === 'target' ? 'TP' : t.exitType === 'stop' ? 'SL' : t.exitType === 'time' ? 'TIME' : 'END';
-    const pnlStr = (t.pnl >= 0 ? '+' : '') + '£' + t.pnl.toFixed(2);
-    console.log(`  ${t.entryDate.padEnd(12)}${side.padEnd(7)}${t.entryPrice.toFixed(2).padEnd(10)}${t.exitPrice.toFixed(2).padEnd(10)}${exitType.padEnd(10)}${String(t.barsHeld).padEnd(5)}${pnlStr.padStart(9)}${('£' + runningEquity.toFixed(2)).padStart(10)}`);
+    const pnlStr = (t.pnl >= 0 ? '+' : '') + '$' + t.pnl.toFixed(2);
+    console.log(`  ${t.entryDate.padEnd(12)}${side.padEnd(7)}${t.entryPrice.toFixed(2).padEnd(10)}${t.exitPrice.toFixed(2).padEnd(10)}${exitType.padEnd(10)}${String(t.barsHeld).padEnd(5)}${pnlStr.padStart(9)}${('$' + runningEquity.toFixed(2)).padStart(10)}`);
   }
 }
 
@@ -461,7 +461,7 @@ async function runScannerMode(startDate, endDate) {
   console.log(`  Lookback: ${lookbackStart} (for 200-SMA warmup)`);
   console.log(`  Test period: ${startDate} to ${endDate}\n`);
 
-  const config = { initialCapital: 250, riskPct: 15, minPositionGBP: 25 };
+  const config = { initialCapital: 250, riskPct: 15, minPositionUSD: 25 };
   const allResultsCRSI2 = {};
   const allResultsIBS = {};
   const allResultsFB = {};
@@ -493,7 +493,7 @@ async function runScannerMode(startDate, endDate) {
 }
 
 function printScannerReport(results, startDate, endDate) {
-  const gbp = v => (v >= 0 ? '+' : '') + '£' + v.toFixed(2);
+  const usd = v => (v >= 0 ? '+' : '') + '$' + v.toFixed(2);
   const pct = v => v.toFixed(1) + '%';
   const num = v => v.toFixed(2);
 
@@ -509,8 +509,8 @@ function printScannerReport(results, startDate, endDate) {
   console.log(`${'Wins'.padEnd(22)}${String(crsi2.wins).padStart(16)}${String(ibs.wins).padStart(16)}${String(fb.wins).padStart(16)}`);
   console.log(`${'Losses'.padEnd(22)}${String(crsi2.losses).padStart(16)}${String(ibs.losses).padStart(16)}${String(fb.losses).padStart(16)}`);
   console.log(`${'Win Rate'.padEnd(22)}${pct(crsi2.winRate).padStart(16)}${pct(ibs.winRate).padStart(16)}${pct(fb.winRate).padStart(16)}`);
-  console.log(`${'Net P&L'.padEnd(22)}${gbp(crsi2.netPnL).padStart(16)}${gbp(ibs.netPnL).padStart(16)}${gbp(fb.netPnL).padStart(16)}`);
-  console.log(`${'Final Equity'.padEnd(22)}${gbp(crsi2.finalEquity).padStart(16)}${gbp(ibs.finalEquity).padStart(16)}${gbp(fb.finalEquity).padStart(16)}`);
+  console.log(`${'Net P&L'.padEnd(22)}${usd(crsi2.netPnL).padStart(16)}${usd(ibs.netPnL).padStart(16)}${usd(fb.netPnL).padStart(16)}`);
+  console.log(`${'Final Equity'.padEnd(22)}${usd(crsi2.finalEquity).padStart(16)}${usd(ibs.finalEquity).padStart(16)}${usd(fb.finalEquity).padStart(16)}`);
   console.log(`${'Max Drawdown'.padEnd(22)}${pct(crsi2.maxDrawdown).padStart(16)}${pct(ibs.maxDrawdown).padStart(16)}${pct(fb.maxDrawdown).padStart(16)}`);
   console.log(`${'Profit Factor'.padEnd(22)}${num(crsi2.profitFactor).padStart(16)}${num(ibs.profitFactor).padStart(16)}${num(fb.profitFactor).padStart(16)}`);
   console.log('-'.repeat(70));
@@ -525,11 +525,11 @@ function printScannerReport(results, startDate, endDate) {
     console.log(`  ${'------'.padEnd(8)}${'------'.padStart(8)}${'---'.padStart(8)}${'---'.padStart(10)}${'--'.padStart(8)}`);
     for (const sym of symbols.sort()) {
       const r = data.perSymbol[sym];
-      console.log(`  ${sym.padEnd(8)}${String(r.totalTrades).padStart(8)}${pct(r.winRate).padStart(8)}${gbp(r.netPnL).padStart(10)}${num(r.profitFactor).padStart(8)}`);
+      console.log(`  ${sym.padEnd(8)}${String(r.totalTrades).padStart(8)}${pct(r.winRate).padStart(8)}${usd(r.netPnL).padStart(10)}${num(r.profitFactor).padStart(8)}`);
     }
   }
 
-  console.log(`\nCapital: £${crsi2.initialCapital} | Risk: 15% equity/trade (min £25) | Daily bars | No slippage/commission`);
+  console.log(`\nCapital: $${crsi2.initialCapital} | Risk: 15% equity/trade (min $25) | Daily bars | No slippage/commission`);
 }
 
 // ─── Main ───
@@ -559,7 +559,7 @@ async function main() {
   const bars = rawD.map(normD);
   console.log(`  Got ${bars.length} daily bars`);
 
-  const config = { initialCapital: 250, riskPct: 15, minPositionGBP: 25 };
+  const config = { initialCapital: 250, riskPct: 15, minPositionUSD: 25 };
 
   console.log('Running Connors RSI(2)...');
   const resultCRSI2 = runSwingBacktest(bars, processBarCRSI2, createCRSI2State, config, startDate);
