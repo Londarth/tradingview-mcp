@@ -6,28 +6,20 @@ import { readFile } from 'fs/promises';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
+import { sendTelegram, MAIN_BUTTONS, escapeHtml, TG_API, TG_CHAT_ID, TG_TOKEN } from './telegram.js';
+
+// Re-export escapeHtml for test compatibility
+export { escapeHtml };
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TG_API = `https://api.telegram.org/bot${TG_TOKEN}`;
 const BOT_NAME = 'touch-turn';
 const LOG_PATH = join(__dirname, 'touch-turn-log.json');
 const SNAPSHOT_PATH = join(__dirname, 'account-snapshot.json');
 
 let lastUpdateId = 0;
 
-const MAIN_BUTTONS = [[
-  { text: '▶ Start', callback_data: '/start' },
-  { text: '⏹ Stop', callback_data: '/stop' },
-  { text: '📊 Status', callback_data: '/status' },
-]];
-
 // ─── Pure functions (exported for testing) ───
-
-export function escapeHtml(text) {
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 export function parseCommand(text) {
   if (!text || !text.startsWith('/')) return null;
@@ -37,22 +29,6 @@ export function parseCommand(text) {
 
 export function isAuthorized(chatId) {
   return String(chatId) === String(TG_CHAT_ID);
-}
-
-export async function sendTelegram(text, buttons = MAIN_BUTTONS) {
-  if (!TG_TOKEN) return;
-  try {
-    const body = { chat_id: TG_CHAT_ID, text, parse_mode: 'HTML' };
-    if (buttons) body.reply_markup = { inline_keyboard: buttons };
-    const resp = await fetch(`${TG_API}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    if (!resp.ok) console.error(`Telegram send error: ${resp.status}`);
-  } catch (e) {
-    console.error(`Telegram send failed: ${e.message}`);
-  }
 }
 
 async function answerCallbackQuery(callbackQueryId) {
@@ -119,18 +95,18 @@ async function handleStart() {
   try {
     await pm2('start ecosystem.config.cjs --only touch-turn-bot');
     const paper = process.env.ALPACA_PAPER !== 'false' ? 'PAPER' : 'LIVE';
-    await sendTelegram(`⚡️ <b>Touch &amp; Turn Bot started</b>\nMode: ${paper}\nWindow: 9:45–11:00 ET`);
+    await sendTelegram(`⚡️ <b>Touch &amp; Turn Bot started</b>\nMode: ${paper}\nWindow: 9:45–11:00 ET`, { buttons: MAIN_BUTTONS });
   } catch (err) {
-    await sendTelegram(`❌ Failed to start bot: ${err.message}`);
+    await sendTelegram(`❌ Failed to start bot: ${err.message}`, { buttons: MAIN_BUTTONS });
   }
 }
 
 async function handleStop() {
   try {
     await pm2('stop touch-turn-bot');
-    await sendTelegram('🛑 <b>Touch &amp; Turn Bot stopped</b>');
+    await sendTelegram('🛑 <b>Touch &amp; Turn Bot stopped</b>', { buttons: MAIN_BUTTONS });
   } catch (err) {
-    await sendTelegram(`❌ Failed to stop bot: ${err.message}`);
+    await sendTelegram(`❌ Failed to stop bot: ${err.message}`, { buttons: MAIN_BUTTONS });
   }
 }
 
@@ -189,7 +165,7 @@ async function handleStatus() {
     msg += '\n\n<i>No recent activity</i>';
   }
 
-  await sendTelegram(msg);
+  await sendTelegram(msg, { buttons: MAIN_BUTTONS });
 }
 
 async function handleHelp() {
@@ -198,7 +174,8 @@ async function handleHelp() {
     '/start — Start the trading bot\n' +
     '/stop — Stop the trading bot\n' +
     '/status — Show bot status and recent trades\n' +
-    '/help — Show this message'
+    '/help — Show this message',
+    { buttons: MAIN_BUTTONS }
   );
 }
 

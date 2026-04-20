@@ -3,18 +3,29 @@ dotenv.config();
 
 import { retry } from './lib/retry.js';
 
-const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-const TG_API = `https://api.telegram.org/bot${TG_TOKEN}`;
+export const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+export const TG_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+export const TG_API = `https://api.telegram.org/bot${TG_TOKEN}`;
 
 let enabled = !!(TG_TOKEN && TG_CHAT_ID && TG_TOKEN !== 'your_telegram_bot_token');
 
 export function telegramEnabled() { return enabled; }
 
-export async function sendTelegram(text, parseMode = 'HTML') {
+export function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+export const MAIN_BUTTONS = [[
+  { text: '▶ Start', callback_data: '/start' },
+  { text: '⏹ Stop', callback_data: '/stop' },
+  { text: '📊 Status', callback_data: '/status' },
+]];
+
+export async function sendTelegram(text, { parseMode = 'HTML', buttons = null } = {}) {
   if (!enabled) return;
   try {
     const body = { chat_id: TG_CHAT_ID, text, parse_mode: parseMode };
+    if (buttons) body.reply_markup = { inline_keyboard: buttons };
     const resp = await retry(() => fetch(`${TG_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

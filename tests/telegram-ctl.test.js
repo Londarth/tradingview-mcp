@@ -6,7 +6,8 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCommand, isAuthorized, escapeHtml } from '../scripts/telegram-ctl.js';
+import { parseCommand, isAuthorized } from '../scripts/telegram-ctl.js';
+import { escapeHtml } from '../scripts/telegram.js';
 
 describe('parseCommand', () => {
   it('extracts /start from plain command', () => {
