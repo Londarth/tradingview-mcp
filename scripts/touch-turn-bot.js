@@ -432,6 +432,14 @@ async function runBot() {
   log(`Telegram: ${telegramEnabled() ? 'ON' : 'OFF'}`);
   log('═'.repeat(60));
 
+  // Validate required env vars
+  const required = ['ALPACA_API_KEY', 'ALPACA_SECRET_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+  const missing = required.filter(k => !process.env[k]);
+  if (missing.length > 0) {
+    log(`FATAL: Missing required env vars: ${missing.join(', ')}`, 'error');
+    process.exit(1);
+  }
+
   // Write initial snapshot
   await writeSnapshot();
   startPeriodicSave();

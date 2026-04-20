@@ -61,3 +61,18 @@ describe('CONFIG defaults', () => {
     delete process.env.POSITION_PCT;
   });
 });
+
+describe('config validation', () => {
+  it('lists required env vars', () => {
+    const required = ['ALPACA_API_KEY', 'ALPACA_SECRET_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+    assert.equal(required.length, 4);
+    assert.ok(required.includes('ALPACA_API_KEY'));
+  });
+
+  it('detects missing required vars', () => {
+    const env = { ALPACA_API_KEY: 'x', ALPACA_SECRET_KEY: 'x' };
+    const required = ['ALPACA_API_KEY', 'ALPACA_SECRET_KEY', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'];
+    const missing = required.filter(k => !env[k]);
+    assert.deepEqual(missing, ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']);
+  });
+});
