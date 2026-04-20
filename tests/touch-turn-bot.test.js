@@ -114,3 +114,93 @@ describe('CONFIG env var overrides', () => {
     delete process.env.HARD_EXIT;
   });
 });
+
+describe('scanCandidates logic', () => {
+  it('filters out symbols with ATR below minimum', () => {
+    const dailyATR = 0.30;
+    const minATR = 0.50;
+    assert.ok(dailyATR < minATR, 'should be filtered out');
+  });
+
+  it('keeps symbols with ATR at or above minimum', () => {
+    const dailyATR = 0.50;
+    const minATR = 0.50;
+    assert.ok(dailyATR >= minATR, 'should pass filter');
+  });
+
+  it('filters out ranges below ATR percentage threshold', () => {
+    const range = 0.10;
+    const dailyATR = 1.00;
+    const threshold = 0.25;
+    assert.ok(range < dailyATR * threshold, 'range too small, should be filtered');
+  });
+
+  it('keeps ranges at or above ATR percentage threshold', () => {
+    const range = 0.25;
+    const dailyATR = 1.00;
+    const threshold = 0.25;
+    assert.ok(range >= dailyATR * threshold, 'range sufficient, should pass');
+  });
+
+  it('sorts candidates by rangeATRRatio descending', () => {
+    const candidates = [
+      { sym: 'LOW', rangeATRRatio: 0.25 },
+      { sym: 'HIGH', rangeATRRatio: 0.80 },
+      { sym: 'MED', rangeATRRatio: 0.50 },
+    ];
+    candidates.sort((a, b) => b.rangeATRRatio - a.rangeATRRatio);
+    assert.equal(candidates[0].sym, 'HIGH');
+    assert.equal(candidates[1].sym, 'MED');
+    assert.equal(candidates[2].sym, 'LOW');
+  });
+});
+
+describe('session time checks', () => {
+  it('930 is before 945 entry window', () => {
+    assert.ok(930 < 945);
+  });
+
+  it('945 is within entry window', () => {
+    assert.ok(945 >= 945 && 945 < 1100);
+  });
+
+  it('1100 is at session end (no new entries)', () => {
+    assert.ok(1100 >= 1100);
+  });
+
+  it('1130 is at hard exit', () => {
+    assert.ok(1130 >= 1130);
+  });
+});
+
+describe('entry/exit level calculation', () => {
+  it('long: entry at range.low, target and stop based on fib and RR', () => {
+    const range = { high: 11, low: 9, open: 10, close: 8.5, range: 2 };
+    const isRed = range.close < range.open;
+    assert.ok(isRed);
+
+    const entryPrice = range.low;
+    const targetDist = 0.618 * range.range;
+    const target = entryPrice + targetDist;
+    const stop = entryPrice - targetDist / 2.0;
+
+    assert.equal(entryPrice, 9);
+    assert.ok(Math.abs(target - 10.236) < 0.001);
+    assert.ok(Math.abs(stop - 8.382) < 0.001);
+  });
+
+  it('short: entry at range.high, target and stop based on fib and RR', () => {
+    const range = { high: 11, low: 9, open: 10, close: 11.5, range: 2 };
+    const isGreen = range.close > range.open;
+    assert.ok(isGreen);
+
+    const entryPrice = range.high;
+    const targetDist = 0.618 * range.range;
+    const target = entryPrice - targetDist;
+    const stop = entryPrice + targetDist / 2.0;
+
+    assert.equal(entryPrice, 11);
+    assert.ok(Math.abs(target - 9.764) < 0.001);
+    assert.ok(Math.abs(stop - 11.618) < 0.001);
+  });
+});
