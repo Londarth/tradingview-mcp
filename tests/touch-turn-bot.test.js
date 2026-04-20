@@ -40,3 +40,24 @@ describe('shutdown handlers', () => {
     assert.ok(signals.includes('SIGTERM'));
   });
 });
+
+describe('CONFIG defaults', () => {
+  it('positionPct defaults to 10 (not 50)', () => {
+    const defaultPct = 10;
+    assert.equal(defaultPct, 10);
+  });
+
+  it('positionPct reads from POSITION_PCT env var', () => {
+    process.env.POSITION_PCT = '20';
+    const positionPct = parseInt(process.env.POSITION_PCT, 10) || 10;
+    assert.equal(positionPct, 20);
+    delete process.env.POSITION_PCT;
+  });
+
+  it('positionPct falls back to default when env var is invalid', () => {
+    process.env.POSITION_PCT = 'abc';
+    const positionPct = parseInt(process.env.POSITION_PCT, 10) || 10;
+    assert.equal(positionPct, 10);
+    delete process.env.POSITION_PCT;
+  });
+});

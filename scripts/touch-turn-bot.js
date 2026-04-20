@@ -20,7 +20,7 @@ const CONFIG = {
   atrPctThreshold: 0.25,
   targetFib: 0.618,
   rrRatio: 2.0,
-  positionPct: 50,
+  positionPct: parseInt(process.env.POSITION_PCT, 10) || 10,
   sessionEnd: 1100,
   hardExit: 1130,
   pollIntervalMs: 30000,
