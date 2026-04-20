@@ -10,6 +10,7 @@ import {
   sendTelegram, tgTradeSignal, tgDryRunSignal, tgError, tgEODSummary, tgShutdown,
   telegramEnabled,
 } from './telegram.js';
+import { retry } from './lib/retry.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -57,8 +58,8 @@ function saveLog() {
 
 async function writeSnapshot(extra = {}) {
   try {
-    const acct = await alpaca.getAccount();
-    const positions = await alpaca.getPositions();
+    const acct = await retry(() => alpaca.getAccount());
+    const positions = await retry(() => alpaca.getPositions());
     const posData = positions.map(p => ({
       symbol: p.symbol,
       side: p.side,
@@ -127,7 +128,7 @@ async function fetchDailyATRs(symbols) {
   for (const sym of symbols) {
     try {
       const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${sym}&timeframe=1Day&start=${start}&end=${end}&limit=21&feed=iex`;
-      const resp = await fetch(url, { headers });
+      const resp = await retry(() => fetch(url, { headers }));
       const data = await resp.json();
       const rawBars = data.bars?.[sym] || [];
       const bars = rawBars.map(b => ({ high: b.h, low: b.l, close: b.c }));
@@ -155,7 +156,7 @@ async function fetchOpeningRange(symbol) {
     const start = `${today}T09:30:00-04:00`;
     const end = `${today}T09:50:00-04:00`;
     const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${symbol}&timeframe=5Min&start=${start}&end=${end}&limit=5&feed=iex`;
-    const resp = await fetch(url, { headers });
+    const resp = await retry(() => fetch(url, { headers }));
     const data = await resp.json();
     const rawBars = data.bars?.[symbol] || [];
 
@@ -232,7 +233,7 @@ async function placeBracketOrder(sym, side, entryPrice, stopPrice, targetPrice, 
   }
 
   try {
-    const order = await alpaca.createOrder({
+    const order = await retry(() => alpaca.createOrder({
       symbol: sym,
       qty,
       side: direction,
@@ -242,7 +243,7 @@ async function placeBracketOrder(sym, side, entryPrice, stopPrice, targetPrice, 
       order_class: 'bracket',
       stop_loss: { stop_price: stopPrice.toFixed(2) },
       take_profit: { limit_price: targetPrice.toFixed(2) },
-    });
+    }));
 
     const rr = side === 'long' ? (targetPrice - entryPrice) / (entryPrice - stopPrice) : (entryPrice - targetPrice) / (stopPrice - entryPrice);
     log(`${sym} ${side.toUpperCase()} order placed: qty=${qty} @ limit $${entryPrice.toFixed(2)} | SL=$${stopPrice.toFixed(2)} TP=$${targetPrice.toFixed(2)} | Order: ${order.id}`, 'trade');
@@ -266,7 +267,7 @@ async function monitorOrder(orderId, sym, untilHHMM) {
         continue;
       }
 
-      const order = await alpaca.getOrder(orderId);
+      const order = await retry(() => alpaca.getOrder(orderId));
       log(`${sym}: Order ${orderId} status: ${order.status}`);
 
       if (order.status === 'filled') {
@@ -292,7 +293,7 @@ async function monitorOrder(orderId, sym, untilHHMM) {
   // Time's up — cancel unfilled order
   if (!DRY_RUN && orderId !== 'dry-run') {
     try {
-      await alpaca.cancelOrder(orderId);
+      await retry(() => alpaca.cancelOrder(orderId));
       log(`${sym}: Cancelled unfilled order (time limit)`, 'trade');
     } catch (err) {
       log(`${sym}: Cancel error: ${err.message}`, 'error');
@@ -314,7 +315,7 @@ async function monitorPosition(sym, untilHHMM) {
         continue;
       }
 
-      const pos = await alpaca.getPosition(sym).catch(() => null);
+      const pos = await retry(() => alpaca.getPosition(sym)).catch(() => null);
       if (!pos || parseFloat(pos.qty) === 0) {
         log(`${sym}: Position closed (by stop/target)`, 'trade');
         return { closed: true, byBracket: true, pnl: lastPnl };
@@ -333,15 +334,15 @@ async function monitorPosition(sym, untilHHMM) {
   // Hard exit: close position at market
   if (!DRY_RUN) {
     try {
-      const pos = await alpaca.getPosition(sym).catch(() => null);
+      const pos = await retry(() => alpaca.getPosition(sym)).catch(() => null);
       if (pos && parseFloat(pos.qty) > 0) {
         // Capture P&L before closing
         lastPnl = parseFloat(pos.unrealized_pl);
-        await alpaca.createOrder({
+        await retry(() => alpaca.createOrder({
           symbol: sym, qty: pos.qty,
           side: pos.side === 'long' ? 'sell' : 'buy',
           type: 'market', time_in_force: 'day',
-        });
+        }));
         log(`${sym}: Force-closed position (session end) — P&L: $${lastPnl.toFixed(2)}`, 'trade');
       }
     } catch (err) {
@@ -400,7 +401,7 @@ async function sendEODReport(sym, side, entryPrice, exitPrice, pnl) {
     if (entryPrice) msg += `Entry: $${entryPrice.toFixed(2)} | Exit: $${exitPrice?.toFixed(2) ?? 'N/A'}\n`;
   }
 
-  const acct = await alpaca.getAccount().catch(() => null);
+  const acct = await retry(() => alpaca.getAccount()).catch(() => null);
   if (acct) msg += `\n💰 Balance: <b>$${parseFloat(acct.portfolio_value).toFixed(2)}</b>`;
 
   await sendTelegram(msg);
@@ -421,7 +422,7 @@ async function runBot() {
   // Verify Alpaca connection
   let account;
   try {
-    account = await alpaca.getAccount();
+    account = await retry(() => alpaca.getAccount());
     log(`Connected: $${parseFloat(account.cash).toFixed(2)} cash | $${parseFloat(account.portfolio_value).toFixed(2)} portfolio | ${account.status}`);
   } catch (err) {
     log(`FATAL: Cannot connect to Alpaca — ${err.message}`, 'error');
@@ -530,7 +531,7 @@ async function runBot() {
   if (!DRY_RUN && posResult.byBracket) {
     // If closed by bracket (stop/target), try to get realized P&L from closed position
     try {
-      const closedPos = await alpaca.getPosition(sym).catch(() => null);
+      const closedPos = await retry(() => alpaca.getPosition(sym)).catch(() => null);
       if (closedPos) pnl = parseFloat(closedPos.unrealized_pl);
     } catch (e) { /* position already closed */ }
   }
