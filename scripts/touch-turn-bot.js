@@ -37,6 +37,7 @@ const alpaca = new Alpaca({
 
 const IS_PAPER = process.env.ALPACA_PAPER !== 'false';
 const LOG_FILE = path.join(__dirname, 'touch-turn-log.json');
+const SNAPSHOT_FILE = path.join(__dirname, 'account-snapshot.json');
 
 // ─── Logging ───
 const tradeLog = [];
@@ -52,6 +53,35 @@ function saveLog() {
   try {
     fs.writeFileSync(LOG_FILE, JSON.stringify(tradeLog, null, 2));
   } catch (e) { /* ignore */ }
+}
+
+async function writeSnapshot(extra = {}) {
+  try {
+    const acct = await alpaca.getAccount();
+    const positions = await alpaca.getPositions();
+    const posData = positions.map(p => ({
+      symbol: p.symbol,
+      side: p.side,
+      qty: parseInt(p.qty),
+      entryPrice: parseFloat(p.avg_entry_price),
+      currentPrice: parseFloat(p.current_price),
+      unrealizedPl: parseFloat(p.unrealized_pl),
+      targetPrice: parseFloat(p.avg_entry_price) + parseFloat(p.unrealized_pl),
+      stopPrice: 0,
+    }));
+    const snap = {
+      ts: Date.now(),
+      mode: IS_PAPER ? 'PAPER' : 'LIVE',
+      dryRun: DRY_RUN,
+      equity: parseFloat(acct.portfolio_value),
+      cash: parseFloat(acct.cash),
+      positions: posData,
+      ...extra,
+    };
+    fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snap, null, 2));
+  } catch (e) {
+    log(`Snapshot write error: ${e.message}`, 'error');
+  }
 }
 
 // ─── Time helpers ───
@@ -242,6 +272,7 @@ async function monitorOrder(orderId, sym, untilHHMM) {
       if (order.status === 'filled') {
         const fillPrice = parseFloat(order.filled_avg_price);
         log(`${sym}: FILLED at $${fillPrice.toFixed(2)}`, 'trade');
+        await writeSnapshot();
         return { filled: true, fillPrice };
       }
 
@@ -289,6 +320,7 @@ async function monitorPosition(sym, untilHHMM) {
 
       const unrealizedPnl = parseFloat(pos.unrealized_pl);
       log(`${sym}: Position open — unrealized P&L: $${unrealizedPnl.toFixed(2)}`);
+      await writeSnapshot();
       await sleep(CONFIG.pollIntervalMs);
     } catch (err) {
       log(`${sym}: Position check error: ${err.message}`, 'error');
@@ -379,6 +411,9 @@ async function runBot() {
   log(`Telegram: ${telegramEnabled() ? 'ON' : 'OFF'}`);
   log('═'.repeat(60));
 
+  // Write initial snapshot
+  await writeSnapshot();
+
   // Verify Alpaca connection
   let account;
   try {
@@ -456,6 +491,14 @@ async function runBot() {
   // Place bracket order
   const order = await placeBracketOrder(sym, side, entryPrice, stopPrice, targetPrice, qty);
 
+  // Write snapshot with order info
+  await writeSnapshot({
+    order: {
+      symbol: sym, side, qty,
+      price: entryPrice, stop: stopPrice, target: targetPrice,
+    },
+  });
+
   if (!order) {
     log('Order failed — exiting');
     await sendEODReport(sym, side, null, null, 0);
@@ -491,6 +534,7 @@ async function runBot() {
 
   log(`${sym}: Session complete — P&L: $${pnl.toFixed(2)}`, 'trade');
   await sendEODReport(sym, side, orderResult.fillPrice || entryPrice, null, pnl);
+  await writeSnapshot();
   saveLog();
 }
 

@@ -6,7 +6,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseCommand, isAuthorized } from '../scripts/telegram-ctl.js';
+import { parseCommand, isAuthorized, escapeHtml } from '../scripts/telegram-ctl.js';
 
 describe('parseCommand', () => {
   it('extracts /start from plain command', () => {
@@ -71,7 +71,7 @@ describe('formatStatus (inline logic test)', () => {
       msg += '\n\n<b>Recent activity:</b>';
       for (const entry of tradeLog) {
         const prefix = { info: 'ℹ️', trade: '📊', signal: '🔔', error: '❌', win: '✅', loss: '🛑' }[entry.type] || '·';
-        msg += `\n${prefix} ${entry.msg}`;
+        msg += `\n${prefix} ${escapeHtml(entry.msg)}`;
       }
     } else {
       msg += '\n\n<i>No recent activity</i>';
@@ -110,5 +110,34 @@ describe('formatStatus (inline logic test)', () => {
   it('shows no activity when log is empty', () => {
     const msg = formatStatus({ online: false }, [], {});
     assert.ok(msg.includes('No recent activity'));
+  });
+
+  it('escapes HTML in trade log messages', () => {
+    const log = [
+      { ts: '2026-04-17T14:30:00Z', type: 'info', msg: 'DAL: Skipped — range $0.67 < 25% of ATR $3.12' },
+      { ts: '2026-04-17T14:31:00Z', type: 'info', msg: 'Touch & Turn Bot — PAPER' },
+    ];
+    const msg = formatStatus({ online: true }, log, { dryRun: false, symbols: ['AMD'] });
+    assert.ok(msg.includes('&lt;'));
+    assert.ok(msg.includes('&amp;'));
+    assert.ok(!msg.includes('$0.67 < 25%'));
+  });
+});
+
+describe('escapeHtml', () => {
+  it('escapes ampersands', () => {
+    assert.equal(escapeHtml('Touch & Turn'), 'Touch &amp; Turn');
+  });
+
+  it('escapes less-than', () => {
+    assert.equal(escapeHtml('range < 25%'), 'range &lt; 25%');
+  });
+
+  it('escapes greater-than', () => {
+    assert.equal(escapeHtml('price > 100'), 'price &gt; 100');
+  });
+
+  it('handles strings without special chars', () => {
+    assert.equal(escapeHtml('INTC LONG order placed'), 'INTC LONG order placed');
   });
 });

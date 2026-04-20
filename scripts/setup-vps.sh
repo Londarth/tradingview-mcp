@@ -68,8 +68,8 @@ sudo timedatectl set-timezone America/New_York
 echo ">>> Setting up cron jobs for session scheduling..."
 (crontab -l 2>/dev/null; cat <<CRON
 # Scalp bot session scheduling (ET timezone)
-25 9 * * 1-5 cd $REPO_DIR && pm2 start ecosystem.config.cjs --only touch-turn-bot >> /var/log/scalp-bot-cron.log 2>&1
-30 11 * * 1-5 cd $REPO_DIR && pm2 stop touch-turn-bot >> /var/log/scalp-bot-cron.log 2>&1
+25 9 * * 1-5 cd $REPO_DIR && PM2_HOME=/root/.pm2 pm2 start ecosystem.config.cjs --only touch-turn-bot >> /var/log/scalp-bot-cron.log 2>&1
+30 11 * * 1-5 cd $REPO_DIR && PM2_HOME=/root/.pm2 pm2 stop touch-turn-bot >> /var/log/scalp-bot-cron.log 2>&1
 CRON
 ) | crontab -
 

@@ -14,10 +14,21 @@ const TG_API = `https://api.telegram.org/bot${TG_TOKEN}`;
 const BOT_NAME = 'touch-turn';
 const CONFIG_PATH = join(__dirname, 'alpaca-config.json');
 const LOG_PATH = join(__dirname, 'touch-turn-log.json');
+const SNAPSHOT_PATH = join(__dirname, 'account-snapshot.json');
 
 let lastUpdateId = 0;
 
+const MAIN_BUTTONS = [[
+  { text: '▶ Start', callback_data: '/start' },
+  { text: '⏹ Stop', callback_data: '/stop' },
+  { text: '📊 Status', callback_data: '/status' },
+]];
+
 // ─── Pure functions (exported for testing) ───
+
+export function escapeHtml(text) {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
 export function parseCommand(text) {
   if (!text || !text.startsWith('/')) return null;
@@ -29,18 +40,30 @@ export function isAuthorized(chatId) {
   return String(chatId) === String(TG_CHAT_ID);
 }
 
-export async function sendTelegram(text) {
+export async function sendTelegram(text, buttons = MAIN_BUTTONS) {
   if (!TG_TOKEN) return;
   try {
+    const body = { chat_id: TG_CHAT_ID, text, parse_mode: 'HTML' };
+    if (buttons) body.reply_markup = { inline_keyboard: buttons };
     const resp = await fetch(`${TG_API}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: TG_CHAT_ID, text, parse_mode: 'HTML' }),
+      body: JSON.stringify(body),
     });
     if (!resp.ok) console.error(`Telegram send error: ${resp.status}`);
   } catch (e) {
     console.error(`Telegram send failed: ${e.message}`);
   }
+}
+
+async function answerCallbackQuery(callbackQueryId) {
+  try {
+    await fetch(`${TG_API}/answerCallbackQuery`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ callback_query_id: callbackQueryId }),
+    });
+  } catch (e) { /* ignore */ }
 }
 
 // ─── PM2 helpers ───
@@ -88,6 +111,18 @@ async function readConfig() {
   }
 }
 
+async function readSnapshot() {
+  try {
+    const data = await readFile(SNAPSHOT_PATH, 'utf8');
+    const snap = JSON.parse(data);
+    const age = Date.now() - snap.ts;
+    const ageMin = Math.round(age / 60000);
+    return { ...snap, ageMin };
+  } catch {
+    return null;
+  }
+}
+
 // ─── Command handlers ───
 
 async function handleStart() {
@@ -109,9 +144,10 @@ async function handleStop() {
 }
 
 async function handleStatus() {
-  const [botStatus, tradeLog] = await Promise.all([
+  const [botStatus, tradeLog, snapshot] = await Promise.all([
     getBotStatus(),
     readTradeLog(),
+    readSnapshot(),
   ]);
 
   let msg = botStatus.online ? '🟢 <b>Touch &amp; Turn Bot is running</b>' : '🔴 <b>Bot is stopped</b>';
@@ -121,11 +157,42 @@ async function handleStatus() {
     msg += `\nUptime: ${botStatus.uptime}`;
   }
 
+  // Live account data from snapshot
+  if (snapshot) {
+    const paper = snapshot.mode || 'PAPER';
+    const dryTag = snapshot.dryRun ? ' DRY' : '';
+    msg += `\n\n💰 <b>Account</b> (${paper}${dryTag})`;
+    msg += `\nEquity: <b>$${Number(snapshot.equity).toLocaleString('en-US', { minimumFractionDigits: 2 })}</b>`;
+    msg += `\nCash: $${Number(snapshot.cash).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+
+    if (snapshot.positions && snapshot.positions.length > 0) {
+      msg += `\n\n📊 <b>Open Positions</b>`;
+      for (const p of snapshot.positions) {
+        const pnlSign = p.unrealizedPl >= 0 ? '+' : '';
+        const pnlPct = p.entryPrice ? ((p.unrealizedPl / (p.entryPrice * p.qty)) * 100).toFixed(1) : '0.0';
+        msg += `\n• <b>${p.symbol}</b> ${p.side.toUpperCase()} ${p.qty}×$${Number(p.entryPrice).toFixed(2)}`;
+        msg += ` | ${pnlSign}$${Number(p.unrealizedPl).toFixed(2)} (${pnlSign}${pnlPct}%)`;
+        msg += `\n  Now: $${Number(p.currentPrice).toFixed(2)} → $${Number(p.targetPrice).toFixed(2)} / SL $${Number(p.stopPrice).toFixed(2)}`;
+      }
+    } else {
+      msg += `\n\n📋 No open positions`;
+    }
+
+    if (snapshot.order) {
+      const o = snapshot.order;
+      msg += `\n\n⏳ <b>Pending Order</b>`;
+      msg += `\n${o.side.toUpperCase()} ${o.qty} ${o.symbol} @ $${Number(o.price).toFixed(2)}`;
+      msg += `\nSL: $${Number(o.stop).toFixed(2)} | TP: $${Number(o.target).toFixed(2)}`;
+    }
+
+    msg += `\n\n<i>Snapshot ${snapshot.ageMin}m old</i>`;
+  }
+
   if (tradeLog.length > 0) {
     msg += '\n\n<b>Recent activity:</b>';
-    for (const entry of tradeLog.slice(-10)) {
+    for (const entry of tradeLog.slice(-5)) {
       const prefix = entry.level === 'error' ? '❌' : entry.level === 'trade' ? '📊' : 'ℹ️';
-      msg += `\n${prefix} ${entry.msg}`;
+      msg += `\n${prefix} ${escapeHtml(entry.msg)}`;
     }
   } else {
     msg += '\n\n<i>No recent activity</i>';
@@ -176,7 +243,7 @@ async function handleMessage(msg) {
 
 async function poll() {
   try {
-    const url = `${TG_API}/getUpdates?offset=${lastUpdateId + 1}&timeout=30&allowed_updates=%5B%22message%22%5D`;
+    const url = `${TG_API}/getUpdates?offset=${lastUpdateId + 1}&timeout=30&allowed_updates=%5B%22message%22%2C%22callback_query%22%5D`;
     const resp = await fetch(url);
     if (!resp.ok) {
       console.error(`Poll error: ${resp.status}`);
@@ -189,6 +256,16 @@ async function poll() {
       lastUpdateId = update.update_id;
       if (update.message) {
         await handleMessage(update.message);
+      } else if (update.callback_query) {
+        const cb = update.callback_query;
+        if (isAuthorized(cb.message?.chat?.id)) {
+          const handler = COMMANDS[cb.data];
+          if (handler) {
+            console.log(`Callback: ${cb.data} from ${cb.from?.id}`);
+            await handler();
+          }
+        }
+        await answerCallbackQuery(cb.id);
       }
     }
   } catch (err) {

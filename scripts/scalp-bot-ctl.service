@@ -8,6 +8,7 @@ ExecStart=/usr/bin/node /root/scalp-bot/scripts/telegram-ctl.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
+Environment=PM2_HOME=/root/.pm2
 WorkingDirectory=/root/scalp-bot
 
 [Install]
