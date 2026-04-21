@@ -30,8 +30,8 @@ const CONFIG = {
   minPositionUSD: parseInt(process.env.MIN_POSITION_USD, 10) || 100,
 };
 
-let activeOrderId = null;
-let activeSymbol = null;
+// Multi-position tracking: symbol -> { orderId, side, entryPrice, stopPrice, targetPrice, qty, status, fillPrice, pnl }
+const activePositions = new Map();
 let isShuttingDown = false;
 
 // ─── Alpaca client ───
@@ -45,6 +45,7 @@ const alpaca = new Alpaca({
 const IS_PAPER = process.env.ALPACA_PAPER !== 'false';
 const LOG_FILE = path.join(__dirname, 'touch-turn-log.json');
 const SNAPSHOT_FILE = path.join(__dirname, 'account-snapshot.json');
+const WATCHLIST_FILE = process.env.WATCHLIST_PATH || path.join(__dirname, 'watchlist.json');
 
 // ─── Logging ───
 const tradeLog = [];
@@ -196,6 +197,18 @@ async function fetchOpeningRange(symbol) {
 }
 
 // ─── Scanner: find best candidate ───
+
+function readWatchlist() {
+  try {
+    const data = fs.readFileSync(WATCHLIST_FILE, 'utf8');
+    const wl = JSON.parse(data);
+    if (wl.date === getTodayStr() && wl.candidates?.length > 0) {
+      return wl;
+    }
+    log(`Watchlist stale (dated ${wl.date}, today ${getTodayStr()}) — ignoring`);
+  } catch (e) { /* no watchlist file */ }
+  return null;
+}
 async function scanCandidates(atrMap, priceMap) {
   const candidates = [];
 
@@ -233,8 +246,8 @@ async function scanCandidates(atrMap, priceMap) {
 
   // Sort by range/ATR ratio (strongest manipulation candle first)
   candidates.sort((a, b) => b.rangeATRRatio - a.rangeATRRatio);
-  log(`Best candidate: ${candidates[0].sym} (${(candidates[0].rangeATRRatio * 100).toFixed(0)}% of ATR)`);
-  return candidates[0];
+  log(`Found ${candidates.length} candidate(s): ${candidates.map(c => `${c.sym} (${(c.rangeATRRatio * 100).toFixed(0)}% ATR)`).join(', ')}`);
+  return candidates;
 }
 
 // ─── Place bracket order ───
@@ -272,105 +285,6 @@ async function placeBracketOrder(sym, side, entryPrice, stopPrice, targetPrice, 
   }
 }
 
-// ─── Monitor order status ───
-async function monitorOrder(orderId, sym, untilHHMM) {
-  while (getHHMM() < untilHHMM) {
-    if (isShuttingDown) return { filled: false, status: 'shutdown' };
-    try {
-      if (DRY_RUN) {
-        // Simulate: assume not filled
-        log(`${sym}: DRY RUN — monitoring (would cancel at ${untilHHMM})`);
-        await sleep(CONFIG.pollIntervalMs);
-        continue;
-      }
-
-      const order = await retry(() => alpaca.getOrder(orderId));
-      log(`${sym}: Order ${orderId} status: ${order.status}`);
-
-      if (order.status === 'filled') {
-        const fillPrice = parseFloat(order.filled_avg_price);
-        log(`${sym}: FILLED at $${fillPrice.toFixed(2)}`, 'trade');
-        await writeSnapshot();
-        return { filled: true, fillPrice };
-      }
-
-      if (order.status === 'canceled' || order.status === 'rejected' || order.status === 'expired') {
-        log(`${sym}: Order ${order.status}`, 'trade');
-        return { filled: false, status: order.status };
-      }
-
-      // Still pending — wait
-      await sleep(CONFIG.pollIntervalMs);
-    } catch (err) {
-      log(`${sym}: Error checking order: ${err.message}`, 'error');
-      await sleep(CONFIG.pollIntervalMs);
-    }
-  }
-
-  // Time's up — cancel unfilled order
-  if (!DRY_RUN && orderId !== 'dry-run') {
-    try {
-      await retry(() => alpaca.cancelOrder(orderId));
-      log(`${sym}: Cancelled unfilled order (time limit)`, 'trade');
-    } catch (err) {
-      log(`${sym}: Cancel error: ${err.message}`, 'error');
-    }
-  }
-
-  return { filled: false, status: 'cancelled_timeout' };
-}
-
-// ─── Monitor position until hard exit ───
-async function monitorPosition(sym, untilHHMM) {
-  let lastPnl = 0;
-
-  while (getHHMM() < untilHHMM) {
-    if (isShuttingDown) return { closed: false, pnl: lastPnl };
-    try {
-      if (DRY_RUN) {
-        log(`${sym}: DRY RUN — monitoring position (would close at ${untilHHMM})`);
-        await sleep(CONFIG.pollIntervalMs);
-        continue;
-      }
-
-      const pos = await retry(() => alpaca.getPosition(sym)).catch(() => null);
-      if (!pos || parseFloat(pos.qty) === 0) {
-        log(`${sym}: Position closed (by stop/target)`, 'trade');
-        return { closed: true, byBracket: true, pnl: lastPnl };
-      }
-
-      lastPnl = parseFloat(pos.unrealized_pl);
-      log(`${sym}: Position open — unrealized P&L: $${lastPnl.toFixed(2)}`);
-      await writeSnapshot();
-      await sleep(CONFIG.pollIntervalMs);
-    } catch (err) {
-      log(`${sym}: Position check error: ${err.message}`, 'error');
-      await sleep(CONFIG.pollIntervalMs);
-    }
-  }
-
-  // Hard exit: close position at market
-  if (!DRY_RUN) {
-    try {
-      const pos = await retry(() => alpaca.getPosition(sym)).catch(() => null);
-      if (pos && parseFloat(pos.qty) > 0) {
-        // Capture P&L before closing
-        lastPnl = parseFloat(pos.unrealized_pl);
-        await retry(() => alpaca.createOrder({
-          symbol: sym, qty: pos.qty,
-          side: pos.side === 'long' ? 'sell' : 'buy',
-          type: 'market', time_in_force: 'day',
-        }));
-        log(`${sym}: Force-closed position (session end) — P&L: $${lastPnl.toFixed(2)}`, 'trade');
-      }
-    } catch (err) {
-      log(`${sym} CLOSE ERROR: ${err.message}`, 'error');
-      await tgError(`${sym} close failed: ${err.message}`);
-    }
-  }
-
-  return { closed: true, byBracket: false, pnl: lastPnl };
-}
 
 // ─── Morning report ───
 async function sendMorningReport(account, atrMap, priceMap) {
@@ -403,26 +317,67 @@ async function sendMorningReport(account, atrMap, priceMap) {
 }
 
 // ─── EOD report ───
-async function sendEODReport(sym, side, entryPrice, exitPrice, pnl) {
-  const results = [{ symbol: sym, side: side || 'none', pnl: pnl || 0 }];
-  if (!sym) {
-    results.length = 0;
-  }
+async function sendEODReport(tradeResults) {
   let msg = `📊 <b>End of Day Report</b>\n`;
   msg += `${getNYTime().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}\n\n`;
 
-  if (results.length === 0) {
+  if (!tradeResults || tradeResults.length === 0) {
     msg += `🤷 No trade today (no candidates passed filters)`;
   } else {
-    const emoji = pnl >= 0 ? '✅' : '🛑';
-    msg += `${emoji} <b>${sym}</b> ${side?.toUpperCase() ?? '—'}: ${pnl >= 0 ? '+' : ''}$${pnl?.toFixed(2) ?? '0.00'}\n`;
-    if (entryPrice) msg += `Entry: $${entryPrice.toFixed(2)} | Exit: $${exitPrice?.toFixed(2) ?? 'N/A'}\n`;
+    msg += `${tradeResults.length} trade(s) today:\n`;
+    let totalPnl = 0;
+    for (const t of tradeResults) {
+      const emoji = t.pnl >= 0 ? '✅' : '🛑';
+      msg += `${emoji} <b>${t.symbol}</b> ${t.side?.toUpperCase() ?? '—'}: ${t.pnl >= 0 ? '+' : ''}$${t.pnl.toFixed(2)}\n`;
+      totalPnl += t.pnl;
+    }
+    msg += `\n<b>Total: ${totalPnl >= 0 ? '+' : ''}$${totalPnl.toFixed(2)}</b>`;
   }
 
   const acct = await retry(() => alpaca.getAccount()).catch(() => null);
   if (acct) msg += `\n💰 Balance: <b>$${parseFloat(acct.portfolio_value).toFixed(2)}</b>`;
 
   await sendTelegram(msg);
+}
+
+// ─── Close all positions at hard exit ───
+async function closeAllPositions() {
+  for (const [sym, pos] of activePositions) {
+    if (pos.status === 'closed') continue;
+
+    if (pos.status === 'pending' && pos.orderId && pos.orderId !== 'dry-run' && !DRY_RUN) {
+      try {
+        await retry(() => alpaca.cancelOrder(pos.orderId));
+        log(`${sym}: Cancelled pending order at hard exit`, 'trade');
+      } catch (e) {
+        log(`${sym}: Cancel failed: ${e.message}`, 'error');
+      }
+    }
+
+    if (pos.status === 'filled' && !DRY_RUN) {
+      try {
+        const alpacaPos = await retry(() => alpaca.getPosition(sym)).catch(() => null);
+        if (alpacaPos && parseFloat(alpacaPos.qty) > 0) {
+          pos.pnl = parseFloat(alpacaPos.unrealized_pl);
+          await retry(() => alpaca.createOrder({
+            symbol: sym, qty: alpacaPos.qty,
+            side: alpacaPos.side === 'long' ? 'sell' : 'buy',
+            type: 'market', time_in_force: 'day',
+          }));
+          log(`${sym}: Force-closed position (hard exit) — P&L: $${pos.pnl.toFixed(2)}`, 'trade');
+        }
+      } catch (e) {
+        log(`${sym}: Close failed: ${e.message}`, 'error');
+        await tgError(`${sym} close failed at hard exit: ${e.message}`);
+      }
+    }
+
+    if (pos.status === 'dry_run') {
+      log(`${sym}: DRY RUN — would close position at hard exit`, 'trade');
+    }
+
+    pos.status = 'closed';
+  }
 }
 
 // ─── Main bot ───
@@ -467,7 +422,6 @@ async function runBot() {
   // Wait for 9:45 (opening range complete)
   let hhmm = getHHMM();
   if (hhmm < 945) {
-    const waitSec = (945 - hhmm) * 60; // rough estimate
     log(`Waiting for 9:45 ET (current: ${hhmm})...`);
     while (getHHMM() < 945) {
       await sleep(10000);
@@ -479,95 +433,169 @@ async function runBot() {
   hhmm = getHHMM();
   if (hhmm >= CONFIG.sessionEnd) {
     log('Past trading window — exiting');
-    await sendEODReport(null, null, null, null, 0);
+    await sendEODReport([]);
     saveLog();
     return;
   }
 
-  // Scan for best candidate
-  const candidate = await scanCandidates(atrMap, priceMap);
+  // Scan for candidates (prefer watchlist from pre-market scanner)
+  let candidates = [];
+  const watchlist = readWatchlist();
+  if (watchlist) {
+    log(`Using watchlist from pre-market scan (${watchlist.candidates.length} candidates)`);
+    for (const c of watchlist.candidates) {
+      const range = await fetchOpeningRange(c.symbol);
+      if (range) {
+        candidates.push({
+          sym: c.symbol, range, dailyATR: c.dailyATR,
+          rangeATRRatio: range.range / c.dailyATR, lastPrice: c.entryPrice,
+          side: c.side,
+        });
+      } else {
+        log(`Watchlist symbol ${c.symbol} opening range unavailable`);
+      }
+    }
+    if (candidates.length === 0) {
+      log('No valid watchlist candidates — falling back to scan');
+    }
+  }
+  if (candidates.length === 0) {
+    const scanned = await scanCandidates(atrMap, priceMap);
+    candidates = scanned || [];
+  }
 
-  if (!candidate) {
+  if (candidates.length === 0) {
     log('No candidates passed filters — no trade today');
-    await sendEODReport(null, null, null, null, 0);
+    await sendEODReport([]);
     await tgError('No candidates passed filters today — skipping');
     saveLog();
     return;
   }
 
-  const { sym, range, dailyATR } = candidate;
+  log(`Placing orders for ${candidates.length} candidate(s): ${candidates.map(c => c.sym).join(', ')}`);
 
-  // Calculate entry/exit levels
-  let side, entryPrice, targetPrice, stopPrice;
-  if (range.isRed) {
-    side = 'long';
-    entryPrice = range.low;
-    targetPrice = range.low + CONFIG.targetFib * range.range;
-    stopPrice = range.low - (CONFIG.targetFib * range.range) / CONFIG.rrRatio;
-  } else {
-    side = 'short';
-    entryPrice = range.high;
-    targetPrice = range.high - CONFIG.targetFib * range.range;
-    stopPrice = range.high + (CONFIG.targetFib * range.range) / CONFIG.rrRatio;
+  // Place bracket orders for all candidates
+  const balance = parseFloat(account.portfolio_value);
+  for (const candidate of candidates) {
+    const { sym, range, dailyATR, side: watchlistSide } = candidate;
+
+    const side = watchlistSide || (range.isRed ? 'long' : 'short');
+    let entryPrice, targetPrice, stopPrice;
+    if (side === 'long') {
+      entryPrice = range.low;
+      targetPrice = range.low + CONFIG.targetFib * range.range;
+      stopPrice = range.low - (CONFIG.targetFib * range.range) / CONFIG.rrRatio;
+    } else {
+      entryPrice = range.high;
+      targetPrice = range.high - CONFIG.targetFib * range.range;
+      stopPrice = range.high + (CONFIG.targetFib * range.range) / CONFIG.rrRatio;
+    }
+
+    const positionValue = Math.max(balance * (CONFIG.positionPct / 100), CONFIG.minPositionUSD);
+    const qty = Math.max(1, Math.floor(positionValue / entryPrice));
+
+    log(`${sym} ${side.toUpperCase()}: Entry=$${entryPrice.toFixed(2)} | Target=$${targetPrice.toFixed(2)} | Stop=$${stopPrice.toFixed(2)} | Qty=${qty}`);
+
+    const order = await placeBracketOrder(sym, side, entryPrice, stopPrice, targetPrice, qty);
+
+    if (order) {
+      activePositions.set(sym, {
+        orderId: order.id, side, entryPrice, stopPrice, targetPrice, qty,
+        status: DRY_RUN ? 'dry_run' : 'pending',
+        fillPrice: null, pnl: 0,
+      });
+    }
   }
 
-  log(`${sym} ${side.toUpperCase()}: Entry=$${entryPrice.toFixed(2)} | Target=$${targetPrice.toFixed(2)} | Stop=$${stopPrice.toFixed(2)}`);
-
-  // Calculate position size
-  const balance = parseFloat(account.portfolio_value);
-  const positionValue = Math.max(balance * (CONFIG.positionPct / 100), CONFIG.minPositionUSD);
-  const qty = Math.max(1, Math.floor(positionValue / entryPrice));
-
-  log(`${sym}: Position = $${positionValue.toFixed(2)} (${CONFIG.positionPct}%) = ${qty} shares @ $${entryPrice.toFixed(2)}`);
-
-  // Place bracket order
-  const order = await placeBracketOrder(sym, side, entryPrice, stopPrice, targetPrice, qty);
-  activeOrderId = order?.id;
-  activeSymbol = sym;
-
-  // Write snapshot with order info
-  await writeSnapshot({
-    order: {
-      symbol: sym, side, qty,
-      price: entryPrice, stop: stopPrice, target: targetPrice,
-    },
-  });
-
-  if (!order) {
-    log('Order failed — exiting');
-    await sendEODReport(sym, side, null, null, 0);
+  if (activePositions.size === 0) {
+    log('No orders placed — exiting');
+    await sendEODReport([]);
     saveLog();
     return;
   }
 
+  await writeSnapshot({
+    orders: [...activePositions.entries()].map(([sym, pos]) => ({
+      symbol: sym, side: pos.side, qty: pos.qty,
+      price: pos.entryPrice, stop: pos.stopPrice, target: pos.targetPrice,
+    })),
+  });
   saveLog();
 
-  // Monitor order until session end
-  const orderResult = await monitorOrder(order.id, sym, CONFIG.sessionEnd);
-  activeOrderId = null;
+  // Main monitoring loop: poll all orders/positions until hardExit
+  while (getHHMM() < CONFIG.hardExit && !isShuttingDown) {
+    const currentTime = getHHMM();
+    let anyActive = false;
 
-  if (!orderResult.filled) {
-    log(`${sym}: Order not filled — no trade executed`);
-    await sendEODReport(sym, side, null, null, 0);
-    saveLog();
-    return;
+    for (const [sym, pos] of activePositions) {
+      if (pos.status === 'closed') continue;
+      anyActive = true;
+
+      if (pos.status === 'pending') {
+        // Cancel unfilled orders past session end
+        if (currentTime >= CONFIG.sessionEnd) {
+          if (!DRY_RUN && pos.orderId && pos.orderId !== 'dry-run') {
+            try { await retry(() => alpaca.cancelOrder(pos.orderId)); } catch {}
+          }
+          pos.status = 'closed';
+          log(`${sym}: Cancelled unfilled order (session end)`, 'trade');
+          continue;
+        }
+
+        // Check order status
+        try {
+          const order = await retry(() => alpaca.getOrder(pos.orderId));
+          log(`${sym}: Order status: ${order.status}`);
+          if (order.status === 'filled') {
+            pos.status = 'filled';
+            pos.fillPrice = parseFloat(order.filled_avg_price);
+            log(`${sym}: FILLED at $${pos.fillPrice.toFixed(2)}`, 'trade');
+            await writeSnapshot();
+          } else if (['canceled', 'rejected', 'expired'].includes(order.status)) {
+            pos.status = 'closed';
+            log(`${sym}: Order ${order.status}`, 'trade');
+          }
+        } catch (err) {
+          log(`${sym}: Error checking order: ${err.message}`, 'error');
+        }
+      } else if (pos.status === 'filled') {
+        // Check if position closed by bracket (stop/target)
+        try {
+          const alpacaPos = await retry(() => alpaca.getPosition(sym)).catch(() => null);
+          if (!alpacaPos || parseFloat(alpacaPos.qty) === 0) {
+            pos.status = 'closed';
+            log(`${sym}: Position closed (by stop/target)`, 'trade');
+          } else {
+            pos.pnl = parseFloat(alpacaPos.unrealized_pl);
+            log(`${sym}: Position open — unrealized P&L: $${pos.pnl.toFixed(2)}`);
+          }
+        } catch (err) {
+          log(`${sym}: Position check error: ${err.message}`, 'error');
+        }
+      }
+      // dry_run positions stay in dry_run status until hard exit
+    }
+
+    if (!anyActive) {
+      log('All positions closed — exiting early');
+      break;
+    }
+
+    await sleep(CONFIG.pollIntervalMs);
   }
 
-  // Order filled — monitor position until hard exit
-  const posResult = await monitorPosition(sym, CONFIG.hardExit);
+  // Hard exit: cancel pending orders, close filled positions
+  await closeAllPositions();
 
-  // Get final P&L from monitorPosition result
-  let pnl = posResult.pnl || 0;
-  if (!DRY_RUN && posResult.byBracket) {
-    // If closed by bracket (stop/target), try to get realized P&L from closed position
-    try {
-      const closedPos = await retry(() => alpaca.getPosition(sym)).catch(() => null);
-      if (closedPos) pnl = parseFloat(closedPos.unrealized_pl);
-    } catch (e) { /* position already closed */ }
-  }
+  // Build trade results for EOD report
+  const tradeResults = [...activePositions.entries()].map(([sym, pos]) => ({
+    symbol: sym,
+    side: pos.side,
+    entryPrice: pos.fillPrice || pos.entryPrice,
+    pnl: pos.pnl || 0,
+  }));
 
-  log(`${sym}: Session complete — P&L: $${pnl.toFixed(2)}`, 'trade');
-  await sendEODReport(sym, side, orderResult.fillPrice || entryPrice, null, pnl);
+  await sendEODReport(tradeResults);
   await writeSnapshot();
   saveLog();
 }
@@ -585,32 +613,7 @@ async function shutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  // Cancel open orders
-  if (activeOrderId && !DRY_RUN) {
-    try {
-      await retry(() => alpaca.cancelOrder(activeOrderId));
-      log(`Cancelled open order ${activeOrderId}`);
-    } catch (e) {
-      log(`Cancel order failed: ${e.message}`, 'error');
-    }
-  }
-
-  // Close open position if past hard exit time
-  if (activeSymbol && getHHMM() >= CONFIG.hardExit && !DRY_RUN) {
-    try {
-      const pos = await retry(() => alpaca.getPosition(activeSymbol)).catch(() => null);
-      if (pos && parseFloat(pos.qty) > 0) {
-        await retry(() => alpaca.createOrder({
-          symbol: activeSymbol, qty: pos.qty,
-          side: pos.side === 'long' ? 'sell' : 'buy',
-          type: 'market', time_in_force: 'day',
-        }));
-        log(`Closed position in ${activeSymbol} during shutdown`, 'trade');
-      }
-    } catch (e) {
-      log(`Position close during shutdown failed: ${e.message}`, 'error');
-    }
-  }
+  await closeAllPositions();
 
   stopPeriodicSave();
   await tgShutdown();

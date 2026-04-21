@@ -11,6 +11,8 @@ Alpaca trading bot (Touch & Turn scalper) with Telegram control, PM2 process man
 ```
 Phone (Telegram) ←→ telegram-ctl.js (always-on systemd service)
                        ↓ PM2 commands
+pre-market-scan.js (8:55 ET) → watchlist.json
+                       ↓
                     touch-turn-bot.js (session: 9:25–11:30 ET)
                        ↓ REST API
                     Alpaca API ←→ Market data + order execution
@@ -24,6 +26,9 @@ Phone (Telegram) ←→ telegram-ctl.js (always-on systemd service)
 # Run the bot
 npm start                           # node scripts/touch-turn-bot.js
 
+# Pre-market scanner (run at 8:55 ET before bot starts)
+npm run pre-market                  # node scripts/pre-market-scan.js
+
 # Tests
 npm test                            # Run all test suites
 npm run test:bot                    # Bot core logic tests only
@@ -31,7 +36,8 @@ npm run test:ctl                    # Telegram controller tests only
 npm run test:indicators             # Indicator unit tests only
 
 # Backtesting
-npm run backtest                    # Day-trading strategies
+npm run backtest                    # Day-trading strategies (single symbol)
+npm run scan                        # Scanner-mode backtest (full universe, realistic sim)
 npm run swing-backtest              # Swing trading strategies
 
 # PM2 (on VPS)
@@ -60,6 +66,8 @@ All configuration is via `.env` with sensible defaults. See `.env.example` for t
 | `POLL_INTERVAL_MS` | 30000 | Polling interval in ms |
 | `MIN_ATR` | 0.50 | Min daily ATR filter |
 | `MIN_POSITION_USD` | 100 | Min position size in USD |
+| `WATCHLIST_PATH` | scripts/watchlist.json | Path to pre-market scan output |
+| `SCANNER_TOP_N` | 1 | Number of candidates to select per day |
 
 ### Resilience
 - **Retry/backoff**: All Alpaca and Telegram API calls use exponential backoff with jitter (3 retries, 1s base delay)
@@ -99,7 +107,9 @@ The `/scalp-bot` skill manages the trading bot:
 | `scripts/lib/indicators.js` | SMA, ATR, RSI, VWAP indicator closures |
 | `scripts/lib/alpaca-data.js` | Fetch bars, normalize, compute daily ATR map |
 | `scripts/lib/backtest-utils.js` | Stats, combine results, calcQty |
-| `scripts/backtest.js` | Day-trading backtester |
+| `scripts/lib/scanner.js` | Shared scanner filters and ranking logic |
+| `scripts/backtest.js` | Day-trading backtester (single + scanner mode) |
+| `scripts/pre-market-scan.js` | Pre-market scanner (writes watchlist.json) |
 | `scripts/swing-backtest.js` | Swing trading backtester |
 | `scripts/setup-vps.sh` | VPS provisioning script |
 | `scripts/scalp-bot-ctl.service` | Systemd unit file template |

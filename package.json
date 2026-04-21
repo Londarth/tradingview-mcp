@@ -20,6 +20,8 @@
     "test:bot": "node --test tests/touch-turn-bot.test.js",
     "test:indicators": "node --test tests/indicators.test.js",
     "backtest": "node scripts/backtest.js",
+    "scan": "node scripts/backtest.js scan",
+    "pre-market": "node scripts/pre-market-scan.js",
     "swing-backtest": "node scripts/swing-backtest.js"
   },
   "dependencies": {

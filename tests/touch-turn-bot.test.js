@@ -173,6 +173,98 @@ describe('session time checks', () => {
   });
 });
 
+describe('multi-position tracking', () => {
+  it('tracks multiple positions in a Map', () => {
+    const activePositions = new Map();
+    activePositions.set('SOFI', { orderId: 'o1', side: 'long', status: 'pending', pnl: 0 });
+    activePositions.set('RIVN', { orderId: 'o2', side: 'short', status: 'filled', pnl: 1.50 });
+    assert.equal(activePositions.size, 2);
+    assert.equal(activePositions.get('SOFI').status, 'pending');
+    assert.equal(activePositions.get('RIVN').status, 'filled');
+  });
+
+  it('transitions position status from pending to filled', () => {
+    const activePositions = new Map();
+    activePositions.set('SOFI', { orderId: 'o1', side: 'long', status: 'pending', pnl: 0 });
+    const pos = activePositions.get('SOFI');
+    pos.status = 'filled';
+    pos.fillPrice = 8.50;
+    assert.equal(activePositions.get('SOFI').status, 'filled');
+    assert.equal(activePositions.get('SOFI').fillPrice, 8.50);
+  });
+
+  it('transitions position status to closed when bracket hits', () => {
+    const activePositions = new Map();
+    activePositions.set('SOFI', { orderId: 'o1', side: 'long', status: 'filled', pnl: 0 });
+    activePositions.get('SOFI').status = 'closed';
+    assert.equal(activePositions.get('SOFI').status, 'closed');
+  });
+
+  it('builds trade results array from activePositions', () => {
+    const activePositions = new Map();
+    activePositions.set('SOFI', { side: 'long', entryPrice: 8.50, fillPrice: 8.52, pnl: 2.34, status: 'closed' });
+    activePositions.set('RIVN', { side: 'short', entryPrice: 15.00, fillPrice: 14.95, pnl: -0.63, status: 'closed' });
+
+    const tradeResults = [...activePositions.entries()].map(([sym, pos]) => ({
+      symbol: sym, side: pos.side, entryPrice: pos.fillPrice || pos.entryPrice, pnl: pos.pnl || 0,
+    }));
+
+    assert.equal(tradeResults.length, 2);
+    assert.equal(tradeResults[0].symbol, 'SOFI');
+    assert.equal(tradeResults[0].pnl, 2.34);
+    assert.equal(tradeResults[1].symbol, 'RIVN');
+    assert.equal(tradeResults[1].pnl, -0.63);
+
+    const totalPnl = tradeResults.reduce((sum, t) => sum + t.pnl, 0);
+    assert.ok(Math.abs(totalPnl - 1.71) < 0.01);
+  });
+
+  it('counts active (non-closed) positions for early exit check', () => {
+    const activePositions = new Map();
+    activePositions.set('SOFI', { status: 'closed', pnl: 2.34 });
+    activePositions.set('RIVN', { status: 'closed', pnl: -0.63 });
+    const anyActive = [...activePositions.values()].some(p => p.status !== 'closed');
+    assert.equal(anyActive, false);
+  });
+
+  it('detects when some positions are still active', () => {
+    const activePositions = new Map();
+    activePositions.set('SOFI', { status: 'closed', pnl: 2.34 });
+    activePositions.set('RIVN', { status: 'filled', pnl: -0.63 });
+    const anyActive = [...activePositions.values()].some(p => p.status !== 'closed');
+    assert.equal(anyActive, true);
+  });
+});
+
+describe('EOD report multi-trade', () => {
+  it('formats total P&L across multiple trades', () => {
+    const tradeResults = [
+      { symbol: 'RIVN', side: 'long', pnl: 1.25 },
+      { symbol: 'INTC', side: 'short', pnl: -0.63 },
+      { symbol: 'SOFI', side: 'long', pnl: 0.84 },
+    ];
+    const totalPnl = tradeResults.reduce((sum, t) => sum + t.pnl, 0);
+    assert.ok(Math.abs(totalPnl - 1.46) < 0.01);
+  });
+
+  it('handles empty trade results (no candidates)', () => {
+    const tradeResults = [];
+    assert.equal(tradeResults.length, 0);
+  });
+
+  it('uses fillPrice over entryPrice when available', () => {
+    const pos = { entryPrice: 8.50, fillPrice: 8.52, pnl: 2.34 };
+    const reportedEntry = pos.fillPrice || pos.entryPrice;
+    assert.equal(reportedEntry, 8.52);
+  });
+
+  it('falls back to entryPrice when fillPrice is null', () => {
+    const pos = { entryPrice: 8.50, fillPrice: null, pnl: 0 };
+    const reportedEntry = pos.fillPrice || pos.entryPrice;
+    assert.equal(reportedEntry, 8.50);
+  });
+});
+
 describe('entry/exit level calculation', () => {
   it('long: entry at range.low, target and stop based on fib and RR', () => {
     const range = { high: 11, low: 9, open: 10, close: 8.5, range: 2 };
