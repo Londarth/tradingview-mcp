@@ -76,7 +76,7 @@ All configuration is via `.env` with sensible defaults. See `.env.example` for t
 - **Periodic log saving**: Trade log saved every 5 minutes during monitoring loops
 
 ### Telegram Module
-`telegram.js` is the single source for all Telegram messaging. It exports `sendTelegram(text, {parseMode, buttons})`, `telegramEnabled()`, `tgTradeSignal()`, `tgEODSummary()`, `tgError()`, `tgStartup()`, `tgShutdown()`, `MAIN_BUTTONS`, `escapeHtml`, and `TG_API`. The controller (`telegram-ctl.js`) imports from it.
+`telegram.js` is the single source for all Telegram messaging. It exports `sendTelegram(text, {parseMode, buttons})`, `telegramEnabled()`, `tgTradeSignal()`, `tgDryRunSignal()`, `tgError()`, `tgShutdown()`, `MAIN_BUTTONS`, `escapeHtml`, and `TG_API`. The controller (`telegram-ctl.js`) imports from it.
 
 ### PM2 Process Names
 - `touch-turn-bot` — the trading bot (session-only, autorestart: false)
@@ -108,6 +108,7 @@ The `/scalp-bot` skill manages the trading bot:
 | `scripts/lib/alpaca-data.js` | Fetch bars, normalize, compute daily ATR map |
 | `scripts/lib/backtest-utils.js` | Stats, combine results, calcQty |
 | `scripts/lib/scanner.js` | Shared scanner filters and ranking logic |
+| `scripts/lib/time.js` | ET timezone helpers (`getNYTime`, `getTodayStr`, `getHHMM_ET`) |
 | `scripts/backtest.js` | Day-trading backtester (single + scanner mode) |
 | `scripts/pre-market-scan.js` | Pre-market scanner (writes watchlist.json) |
 | `scripts/swing-backtest.js` | Swing trading backtester |
