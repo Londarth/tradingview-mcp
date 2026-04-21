@@ -336,8 +336,9 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
   const equityCurve = [equity];
 
   function calcQty() {
-    const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionUSD || 20);
-    return positionValue / (position ? position.entryPrice : 1);
+    if (!position) return 0;
+    const positionValue = Math.max(position.entryEquity * (config.riskPct / 100), config.minPositionUSD || 20);
+    return positionValue / position.entryPrice;
   }
 
   for (let i = 0; i < bars.length; i++) {
@@ -377,13 +378,15 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
         sessionVWAP, smaVolume, atr5m, rsi14, dailyATRMap, config,
       });
       if (signal.action === 'enter') {
-        const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionUSD || 20);
+        const entryEquity = equity;
+        const positionValue = Math.max(entryEquity * (config.riskPct / 100), config.minPositionUSD || 20);
         const qty = positionValue / bar.close;
         position = {
           side: signal.side, entryPrice: bar.close,
           stopPrice: signal.stop, targetPrice: signal.target,
           stopType: signal.stopType || 'fixed',
           entryDate: barDate,
+          entryEquity,
         };
       }
     }

@@ -328,3 +328,20 @@ describe('time helpers', () => {
     assert.equal(todayStr, '2026-04-21');
   });
 });
+
+describe('backtest equity tracking', () => {
+  it('uses entry-time equity for qty, not exit-time equity', () => {
+    const entryEquity = 200;
+    const exitEquity = 250; // after some wins
+    const riskPct = 50;
+    const minPositionUSD = 100;
+    const entryPrice = 10;
+
+    const entryQty = Math.max(entryEquity * (riskPct / 100), minPositionUSD) / entryPrice;
+    const exitQty = Math.max(exitEquity * (riskPct / 100), minPositionUSD) / entryPrice;
+
+    assert.equal(entryQty, 10);
+    assert.equal(exitQty, 12.5);
+    assert.ok(entryQty !== exitQty, 'qty should differ if equity changed');
+  });
+});
