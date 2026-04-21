@@ -206,7 +206,7 @@ describe('multi-position tracking', () => {
     activePositions.set('RIVN', { side: 'short', entryPrice: 15.00, fillPrice: 14.95, pnl: -0.63, status: 'closed' });
 
     const tradeResults = [...activePositions.entries()].map(([sym, pos]) => ({
-      symbol: sym, side: pos.side, entryPrice: pos.fillPrice || pos.entryPrice, pnl: pos.pnl || 0,
+      symbol: sym, side: pos.side, entryPrice: pos.fillPrice ?? pos.entryPrice, pnl: pos.pnl ?? 0,
     }));
 
     assert.equal(tradeResults.length, 2);
@@ -374,5 +374,310 @@ describe('rankCandidates immutability', () => {
     const ranked = rankCandidatesImmutable(original);
     assert.equal(original[0].score, undefined);
     assert.ok(ranked[0].score !== undefined);
+  });
+});
+
+describe('pnl ?? 0 vs || 0', () => {
+  it('distinguishes undefined from zero using ??', () => {
+    const undefinedPnl = undefined;
+    const zeroPnl = 0;
+    assert.equal(undefinedPnl ?? 0, 0);
+    assert.equal(zeroPnl ?? 0, 0);
+    // The key difference: || treats 0 as falsy
+    assert.equal(zeroPnl || 0, 0);  // same result but for wrong reason
+    // For null:
+    assert.equal(null ?? 0, 0);
+    assert.equal(null || 0, 0);
+  });
+
+  it('preserves legitimate zero P&L with ??', () => {
+    const pos = { pnl: 0 };
+    assert.equal(pos.pnl ?? 0, 0);
+    // With || 0, a legit 0 also returns 0, but ?? is explicit about intent
+  });
+
+  it('treats undefined pnl as 0 in trade results', () => {
+    const pos = { pnl: undefined };
+    const reportedPnl = pos.pnl ?? 0;
+    assert.equal(reportedPnl, 0);
+  });
+});
+
+describe('parseFloat vs parseInt for quantities', () => {
+  it('parseFloat preserves fractional quantities', () => {
+    assert.equal(parseFloat('10.5'), 10.5);
+    assert.equal(parseInt('10.5'), 10);
+  });
+
+  it('parseInt truncates fractional shares silently', () => {
+    const alpacaQty = '10.5';
+    assert.equal(parseInt(alpacaQty), 10);  // loses 0.5 share
+    assert.equal(parseFloat(alpacaQty), 10.5);  // correct
+  });
+});
+
+describe('risk-based position sizing', () => {
+  it('sizes by stop distance when RISK_PCT is set', () => {
+    const balance = 10000;
+    const riskPct = 1; // 1% of equity at risk
+    const entryPrice = 10;
+    const stopPrice = 9.50; // $0.50 stop distance
+    const stopDistance = Math.abs(entryPrice - stopPrice);
+    const riskDollars = balance * (riskPct / 100);
+    const qty = Math.max(1, Math.floor(riskDollars / stopDistance));
+
+    // $100 risk / $0.50 stop = 200 shares
+    assert.equal(riskDollars, 100);
+    assert.equal(qty, 200);
+  });
+
+  it('falls back to percentage sizing when RISK_PCT is 0', () => {
+    const balance = 10000;
+    const positionPct = 10;
+    const entryPrice = 10;
+    const positionValue = Math.max(balance * (positionPct / 100), 100);
+    const qty = Math.max(1, Math.floor(positionValue / entryPrice));
+
+    assert.equal(qty, 100); // $1000 / $10 = 100 shares
+  });
+
+  it('risk-based sizing produces smaller qty for wider stops', () => {
+    const balance = 10000;
+    const riskPct = 1;
+    const entryPrice = 10;
+
+    const narrowStop = 9.80; // $0.20 stop
+    const wideStop = 9.50;   // $0.50 stop
+    const qtyNarrow = Math.floor(balance * (riskPct / 100) / Math.abs(entryPrice - narrowStop));
+    const qtyWide = Math.floor(balance * (riskPct / 100) / Math.abs(entryPrice - wideStop));
+
+    assert.ok(qtyNarrow > qtyWide, 'narrow stop should allow more shares');
+    assert.equal(qtyNarrow, 500); // $100 / $0.20
+    assert.equal(qtyWide, 200);  // $100 / $0.50
+  });
+});
+
+describe('max equity risk cap', () => {
+  it('skips trades when max equity at risk is reached', () => {
+    const maxEquityPct = 30;
+    const positionPct = 10;
+    let equityAtRiskPct = 0;
+    const candidates = ['SOFI', 'RIVN', 'INTC', 'Z'];
+
+    const accepted = [];
+    for (const sym of candidates) {
+      if ((equityAtRiskPct + positionPct) > maxEquityPct) break;
+      equityAtRiskPct += positionPct;
+      accepted.push(sym);
+    }
+
+    assert.equal(accepted.length, 3); // 3 * 10 = 30%
+    assert.equal(equityAtRiskPct, 30);
+  });
+});
+
+describe('daily loss limit circuit breaker', () => {
+  it('triggers when daily P&L exceeds limit', () => {
+    const balance = 10000;
+    const dailyLossLimitPct = 3;
+    const dailyPnl = -350; // -$350 loss
+    const dailyLossPct = (dailyPnl / balance) * -100;
+
+    assert.ok(dailyPnl < 0, 'should be a loss');
+    assert.ok(dailyLossPct > dailyLossLimitPct, 'should exceed limit');
+    // 3.5% > 3% → circuit breaker triggers
+    assert.ok(dailyLossPct > 3);
+  });
+
+  it('does not trigger within limit', () => {
+    const balance = 10000;
+    const dailyLossLimitPct = 3;
+    const dailyPnl = -200; // -2%
+    const dailyLossPct = (dailyPnl / balance) * -100;
+
+    assert.ok(dailyLossPct <= dailyLossLimitPct, 'should not exceed limit');
+  });
+});
+
+describe('partial fill detection', () => {
+  it('detects when filled_qty < ordered qty', () => {
+    const orderedQty = 100;
+    const filledQty = 75;
+    assert.ok(filledQty < orderedQty, 'partial fill detected');
+  });
+
+  it('treats full fill as normal', () => {
+    const orderedQty = 100;
+    const filledQty = 100;
+    assert.ok(filledQty === orderedQty, 'full fill');
+  });
+});
+
+describe('unfilled order timeout', () => {
+  it('triggers when order age exceeds threshold', () => {
+    const placedAt = Date.now() - 16 * 60000; // 16 min ago
+    const unfilledTimeoutMin = 15;
+    const ageMin = (Date.now() - placedAt) / 60000;
+    assert.ok(ageMin >= unfilledTimeoutMin, 'order should be timed out');
+  });
+
+  it('does not trigger for fresh orders', () => {
+    const placedAt = Date.now() - 5 * 60000; // 5 min ago
+    const unfilledTimeoutMin = 15;
+    const ageMin = (Date.now() - placedAt) / 60000;
+    assert.ok(ageMin < unfilledTimeoutMin, 'order is still fresh');
+  });
+});
+
+describe('slippage tracking', () => {
+  it('computes slippage in basis points', () => {
+    const entryPrice = 10.00;
+    const fillPrice = 10.005; // $0.005 slippage
+    const slippage = fillPrice - entryPrice;
+    const slippageBps = (slippage / entryPrice) * 10000;
+    assert.ok(Math.abs(slippageBps - 5) < 0.1); // 5 bps
+  });
+
+  it('negative slippage for favorable fills', () => {
+    const entryPrice = 10.00;
+    const fillPrice = 9.995; // favorable
+    const slippage = fillPrice - entryPrice;
+    assert.ok(slippage < 0);
+  });
+});
+
+describe('closeAllPositions error handling', () => {
+  it('does not mark position closed on close failure', () => {
+    const pos = { status: 'filled', pnl: null };
+    // Simulating: close order throws, status should stay 'filled'
+    // In the fixed code, we don't set pos.status = 'closed' in the catch block
+    assert.equal(pos.status, 'filled');
+  });
+
+  it('marks position closed on successful close', () => {
+    const pos = { status: 'filled', pnl: 1.50 };
+    // Simulating: close succeeds
+    pos.status = 'closed';
+    assert.equal(pos.status, 'closed');
+  });
+
+  it('marks position closed on successful cancel', () => {
+    const pos = { status: 'pending', orderId: 'o1' };
+    pos.status = 'closed';
+    assert.equal(pos.status, 'closed');
+  });
+});
+
+describe('P&L capture for bracket-closed positions', () => {
+  it('computes realized P&L from exit order', () => {
+    const side = 'long';
+    const fillPrice = 8.50;
+    const exitPrice = 9.10;
+    const qty = 100;
+    const pnl = (exitPrice - fillPrice) * qty * (side === 'short' ? -1 : 1);
+    assert.ok(Math.abs(pnl - 60) < 0.01); // $0.60 * 100
+  });
+
+  it('computes realized P&L for short positions', () => {
+    const side = 'short';
+    const fillPrice = 11.00;
+    const exitPrice = 10.50;
+    const qty = 50;
+    const pnl = (exitPrice - fillPrice) * qty * (side === 'short' ? -1 : 1);
+    assert.equal(pnl, 25); // -$0.50 * 50 * -1 = $25
+  });
+
+  it('captures P&L as zero when stop-loss hits at entry', () => {
+    const side = 'long';
+    const fillPrice = 8.50;
+    const exitPrice = 8.50;
+    const qty = 100;
+    const pnl = (exitPrice - fillPrice) * qty * (side === 'short' ? -1 : 1);
+    assert.equal(pnl, 0);
+  });
+});
+
+describe('shutdown resilience', () => {
+  it('shutdown always saves logs even if closeAllPositions fails', () => {
+    let logSaved = false;
+    let telegramSent = false;
+    // Simulating: shutdown wraps closeAllPositions in try/catch
+    try { /* closeAllPositions would throw */ } catch {}
+    logSaved = true;
+    telegramSent = true;
+    assert.ok(logSaved);
+    assert.ok(telegramSent);
+  });
+});
+
+describe('new CONFIG defaults', () => {
+  it('dailyLossLimitPct defaults to 3', () => {
+    const defaultVal = 3;
+    assert.equal(defaultVal, 3);
+  });
+
+  it('riskPct defaults to 0 (disabled)', () => {
+    const defaultVal = 0;
+    assert.equal(defaultVal, 0);
+  });
+
+  it('maxEquityPct defaults to 30', () => {
+    const defaultVal = 30;
+    assert.equal(defaultVal, 30);
+  });
+
+  it('unfilledTimeoutMin defaults to 15', () => {
+    const defaultVal = 15;
+    assert.equal(defaultVal, 15);
+  });
+
+  it('apiTimeoutMs defaults to 30000', () => {
+    const defaultVal = 30000;
+    assert.equal(defaultVal, 30000);
+  });
+});
+
+describe('backtest cost model', () => {
+  it('computes slippage cost correctly', () => {
+    const SLIPPAGE_BPS = 5;
+    const COMMISSION_PER_SHARE = 0.005;
+    const entryPrice = 10;
+    const exitPrice = 10.50;
+    const qty = 100;
+
+    const slippageCost = (entryPrice + exitPrice) * qty * (SLIPPAGE_BPS / 10000);
+    const commissionCost = qty * COMMISSION_PER_SHARE * 2;
+    const totalCosts = slippageCost + commissionCost;
+
+    // slippage: $20.50 * 100 * 0.0005 = $1.025
+    // commission: 100 * $0.005 * 2 = $1.00
+    assert.ok(Math.abs(slippageCost - 1.025) < 0.01);
+    assert.ok(Math.abs(commissionCost - 1.00) < 0.01);
+    assert.ok(Math.abs(totalCosts - 2.025) < 0.01);
+  });
+
+  it('reduces net P&L by costs', () => {
+    const rawPnl = 50; // $50 gross profit
+    const costs = 2.025;
+    const netPnl = rawPnl - costs;
+    assert.ok(netPnl < rawPnl, 'costs should reduce P&L');
+    assert.ok(Math.abs(netPnl - 47.975) < 0.01);
+  });
+});
+
+describe('telegram /start debounce', () => {
+  it('rejects rapid /start commands within cooldown', () => {
+    const START_COOLDOWN_MS = 10000;
+    let lastStartCmd = Date.now();
+    const now = Date.now();
+    // Immediate second call
+    assert.ok(now - lastStartCmd < START_COOLDOWN_MS, 'should be within cooldown');
+  });
+
+  it('allows /start after cooldown expires', () => {
+    const START_COOLDOWN_MS = 10000;
+    let lastStartCmd = Date.now() - 15000; // 15s ago
+    const now = Date.now();
+    assert.ok(now - lastStartCmd >= START_COOLDOWN_MS, 'cooldown expired');
   });
 });

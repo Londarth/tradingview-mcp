@@ -18,6 +18,8 @@ const LOG_PATH = join(__dirname, 'touch-turn-log.json');
 const SNAPSHOT_PATH = join(__dirname, 'account-snapshot.json');
 
 let lastUpdateId = 0;
+let lastStartCmd = 0;
+const START_COOLDOWN_MS = 10000;
 
 // ─── Pure functions (exported for testing) ───
 
@@ -92,6 +94,12 @@ async function readSnapshot() {
 // ─── Command handlers ───
 
 async function handleStart() {
+  const now = Date.now();
+  if (now - lastStartCmd < START_COOLDOWN_MS) {
+    await sendTelegram('⏳ Bot start already requested recently — please wait', { buttons: MAIN_BUTTONS });
+    return;
+  }
+  lastStartCmd = now;
   try {
     await pm2('start ecosystem.config.cjs --only touch-turn-bot');
     const paper = process.env.ALPACA_PAPER !== 'false' ? 'PAPER' : 'LIVE';

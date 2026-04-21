@@ -10,6 +10,10 @@ import { getHHMM_ET, getDateStr } from './lib/time.js';
 const SCANNER_UNIVERSE = (process.env.UNIVERSE || 'SOFI,INTC,Z,DAL,RIVN,SBUX,CCL,DIS,F,GM,PLTR,SNAP')
   .split(',').map(s => s.trim()).filter(Boolean);
 
+// Cost model
+const SLIPPAGE_BPS = parseFloat(process.env.SLIPPAGE_BPS) || 5;  // 5 bps = 0.05%
+const COMMISSION_PER_SHARE = parseFloat(process.env.COMMISSION_PER_SHARE) || 0.005;  // $0.005/share
+
 // ─── Bot Scanner (matches touch-turn-bot.js logic) ───
 
 function computeBotSelections(allBars5m, allDailyATRMaps, topN = 1) {
@@ -328,6 +332,12 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
     return positionValue / position.entryPrice;
   }
 
+  function applyCosts(entryPrice, exitPrice, qty, side) {
+    const slippageCost = (entryPrice + exitPrice) * qty * (SLIPPAGE_BPS / 10000);
+    const commissionCost = qty * COMMISSION_PER_SHARE * 2; // entry + exit
+    return slippageCost + commissionCost;
+  }
+
   for (let i = 0; i < bars.length; i++) {
     const bar = bars[i];
     const barDate = getDateStr(bar.ts);
@@ -349,9 +359,11 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
       const exit = checkExits(bar, position, config.sessionEnd, sessionVWAP.value());
       if (exit.closed) {
         const qty = calcQty();
-        const pnl = (exit.exitPrice - position.entryPrice) * qty * (position.side === 'short' ? -1 : 1);
+        const rawPnl = (exit.exitPrice - position.entryPrice) * qty * (position.side === 'short' ? -1 : 1);
+        const costs = applyCosts(position.entryPrice, exit.exitPrice, qty, position.side);
+        const pnl = rawPnl - costs;
         equity += pnl;
-        trades.push({ ...position, exitPrice: exit.exitPrice, exitType: exit.exitType, pnl, qty });
+        trades.push({ ...position, exitPrice: exit.exitPrice, exitType: exit.exitType, pnl, qty, costs });
         position = null;
         peakEquity = Math.max(peakEquity, equity);
         maxDrawdown = Math.max(maxDrawdown, (peakEquity - equity) / peakEquity);
@@ -384,9 +396,11 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
     const lastBar = bars[bars.length - 1];
     const positionValue = Math.max(position.entryEquity * (config.riskPct / 100), config.minPositionUSD || 20);
     const qty = positionValue / position.entryPrice;
-    const pnl = (lastBar.close - position.entryPrice) * qty * (position.side === 'short' ? -1 : 1);
+    const rawPnl = (lastBar.close - position.entryPrice) * qty * (position.side === 'short' ? -1 : 1);
+    const costs = applyCosts(position.entryPrice, lastBar.close, qty, position.side);
+    const pnl = rawPnl - costs;
     equity += pnl;
-    trades.push({ ...position, exitPrice: lastBar.close, exitType: 'data_end', pnl, qty });
+    trades.push({ ...position, exitPrice: lastBar.close, exitType: 'data_end', pnl, qty, costs });
     equityCurve.push(equity);
   }
 
@@ -423,7 +437,7 @@ function printReport(a, b, c, symbol, startDate, endDate) {
   printTradeLog('TOUCH & TURN', c.trades, c.initialCapital);
 
   console.log('');
-  console.log(`Capital: $${a.initialCapital} | Risk: 50% equity/trade (min $100) | No slippage/commission`);
+  console.log(`Capital: $${a.initialCapital} | Risk: 50% equity/trade (min $100) | Slippage: ${SLIPPAGE_BPS} bps | Commission: $${COMMISSION_PER_SHARE}/share`);
 }
 
 function printTradeLog(name, trades, initialCapital) {
@@ -564,7 +578,9 @@ function runBotSimulation(allBars5m, allDailyATRMaps, selections, topN) {
         }
 
         if (exit) {
-          const pnl = (exit.exitPrice - position.entryPrice) * position.qty * (position.side === 'short' ? -1 : 1);
+          const rawPnl = (exit.exitPrice - position.entryPrice) * position.qty * (position.side === 'short' ? -1 : 1);
+          const costs = (position.entryPrice + exit.exitPrice) * position.qty * (SLIPPAGE_BPS / 10000) + position.qty * COMMISSION_PER_SHARE * 2;
+          const pnl = rawPnl - costs;
           equity += pnl;
           trades.push({
             symbol: position.symbol, side: position.side,

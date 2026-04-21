@@ -42,6 +42,21 @@ export async function sendTelegram(text, { parseMode = 'HTML', buttons = null } 
 
 // ─── Formatted messages ───
 
+export async function tgTradeSignalsBatch(signals, { dryRun = false } = {}) {
+  if (!signals || signals.length === 0) return;
+  const header = dryRun
+    ? '⚡️ <b>TOUCH &amp; TURN SIGNALS (DRY RUN)</b>'
+    : '⚡️ <b>TOUCH &amp; TURN SIGNALS</b>';
+  let msg = `${header}\n━━━━━━━━━━━━━━━━━━━━━━━`;
+  for (const s of signals) {
+    const dir = s.side === 'long' ? '🟢 LONG' : '🔴 SHORT';
+    msg += `\n\n<b>${dir} ${s.sym}</b>\n`;
+    msg += `Entry: $${s.price.toFixed(2)} | Stop: $${s.stop.toFixed(2)} | Target: $${s.target.toFixed(2)}\n`;
+    msg += `R:R = 1:${s.rr.toFixed(1)} | Qty: ${s.qty}`;
+  }
+  await sendTelegram(msg);
+}
+
 export async function tgTradeSignal(sym, side, price, stop, target, rr, qty) {
   const dir = side === 'long' ? '🟢 LONG' : '🔴 SHORT';
   await sendTelegram(

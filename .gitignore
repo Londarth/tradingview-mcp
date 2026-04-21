@@ -7,3 +7,5 @@ logs/*
 !logs/.gitkeep
 scripts/touch-turn-log.json
 scripts/trade-log.json
+scripts/account-snapshot.json
+scripts/bot-state.json
