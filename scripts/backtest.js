@@ -382,7 +382,7 @@ function runBacktest(bars, processBarFn, stateInitFn, config, dailyATRMap, scann
   // Force-close at end of data
   if (position) {
     const lastBar = bars[bars.length - 1];
-    const positionValue = Math.max(equity * (config.riskPct / 100), config.minPositionUSD || 20);
+    const positionValue = Math.max(position.entryEquity * (config.riskPct / 100), config.minPositionUSD || 20);
     const qty = positionValue / position.entryPrice;
     const pnl = (lastBar.close - position.entryPrice) * qty * (position.side === 'short' ? -1 : 1);
     equity += pnl;
