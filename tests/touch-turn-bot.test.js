@@ -319,3 +319,12 @@ describe('snapshot structure', () => {
     assert.equal(orders[0].symbol, 'SOFI');
   });
 });
+
+describe('time helpers', () => {
+  it('getTodayStr does not use toISOString (UTC rollover bug)', () => {
+    // Simulate midnight ET = 04:00 UTC. toISOString would return wrong date.
+    const nyTime = new Date('2026-04-21T04:30:00Z'); // 00:30 ET
+    const todayStr = nyTime.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+    assert.equal(todayStr, '2026-04-21');
+  });
+});

@@ -117,7 +117,7 @@ function getHHMM() {
 }
 
 function getTodayStr() {
-  return getNYTime().toISOString().split('T')[0];
+  return getNYTime().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }

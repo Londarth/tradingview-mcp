@@ -27,7 +27,7 @@ const headers = {
 function getNYTime() {
   return new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
 }
-function getTodayStr() { return getNYTime().toISOString().split('T')[0]; }
+function getTodayStr() { return getNYTime().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); }
 
 // ─── Fetch daily ATR for universe ───
 
