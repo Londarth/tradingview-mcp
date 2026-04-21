@@ -29,9 +29,9 @@ Phone (Telegram) ←→ VPS
 7. Cancel unfilled orders at 11:00 ET, close open positions at 11:30 ET
 8. One trade per day max
 
-**Universe**: SOFI, INTC, Z, DAL, RIVN, SBUX, CCL, DIS, F, GM, PLTR, SNAP
+**Universe**: SOFI, INTC, Z, DAL, RIVN, SBUX, CCL, DIS, F, GM, PLTR, SNAP (configurable via `UNIVERSE` env var)
 
-**Position sizing**: 50% of account balance per trade
+**Position sizing**: 10% of account balance per trade (configurable via `POSITION_PCT` env var)
 
 ---
 
@@ -47,7 +47,13 @@ npm install
 
 ### 2. Configure credentials
 
-Create `.env` with:
+Copy the template and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+Required env vars:
 
 ```
 ALPACA_API_KEY=...
@@ -55,7 +61,22 @@ ALPACA_SECRET_KEY=...
 ALPACA_PAPER=true
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
-DRY_RUN=true
+```
+
+Optional strategy parameters (with defaults):
+
+```
+UNIVERSE=SOFI,INTC,Z,DAL,RIVN,SBUX,CCL,DIS,F,GM,PLTR,SNAP
+POSITION_PCT=10
+ATR_PCT_THRESHOLD=0.25
+TARGET_FIB=0.618
+RR_RATIO=2.0
+SESSION_END=1100
+HARD_EXIT=1130
+POLL_INTERVAL_MS=30000
+MIN_ATR=0.50
+MIN_POSITION_USD=100
+DRY_RUN=false
 ```
 
 ### 3. Run locally (paper mode)
@@ -110,6 +131,15 @@ sudo systemctl status scalp-bot-ctl  # Telegram controller status
 
 ---
 
+## Resilience
+
+- **Retry/backoff**: All Alpaca and Telegram API calls retry with exponential backoff (3 retries, 1s base delay)
+- **Graceful shutdown**: SIGINT/SIGTERM cancels open orders, closes positions past hard-exit time, saves logs
+- **Config validation**: Bot exits with a clear error if required env vars are missing
+- **Periodic log saving**: Trade log saved every 5 minutes during monitoring
+
+---
+
 ## Backtesting
 
 ```bash
@@ -123,10 +153,11 @@ npm run swing-backtest     # Swing trading strategies (CRSI2, IBS, Failed Breako
 
 | File | Purpose |
 |------|---------|
-| `.env` | Alpaca API keys, Telegram credentials, DRY_RUN toggle (gitignored) |
+| `.env` | All secrets and config (gitignored). See `.env.example` for full list. |
+| `.env.example` | Template documenting all required and optional env vars |
 | `ecosystem.config.cjs` | PM2 process definition for touch-turn-bot |
 
-Bot parameters (ATR threshold, Fib level, R:R ratio, position size, session times) are configured in `scripts/touch-turn-bot.js`.
+All strategy parameters are configurable via env vars with sensible defaults. No code edits needed.
 
 ---
 
@@ -136,17 +167,26 @@ Bot parameters (ATR threshold, Fib level, R:R ratio, position size, session time
 scalp-bot/
 ├── scripts/
 │   ├── touch-turn-bot.js       # Main trading bot
-│   ├── telegram.js             # Telegram notification functions
+│   ├── telegram.js             # Unified Telegram module
 │   ├── telegram-ctl.js         # Telegram command listener (VPS)
+│   ├── lib/
+│   │   ├── retry.js            # Retry/backoff utility
+│   │   ├── indicators.js      # SMA, ATR, RSI, VWAP
+│   │   ├── alpaca-data.js     # Fetch bars, normalize, ATR map
+│   │   └── backtest-utils.js  # Stats, combine results, calcQty
 │   ├── backtest.js             # Day-trading backtester
 │   ├── swing-backtest.js       # Swing trading backtester
 │   ├── setup-vps.sh            # VPS provisioning script
 │   └── scalp-bot-ctl.service   # Systemd unit file template
 ├── tests/
-│   └── telegram-ctl.test.js    # Telegram controller unit tests
+│   ├── touch-turn-bot.test.js  # Bot core logic tests
+│   ├── telegram-ctl.test.js   # Telegram controller tests
+│   ├── indicators.test.js      # Indicator unit tests
+│   └── retry.test.js           # Retry/backoff tests
 ├── skills/
 │   └── scalp-bot/SKILL.md      # Claude Code skill
 ├── ecosystem.config.cjs        # PM2 config
+├── .env.example                # Env var template
 └── .env                        # Credentials (gitignored)
 ```
 

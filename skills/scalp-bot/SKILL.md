@@ -78,9 +78,23 @@ Only messages from `TELEGRAM_CHAT_ID` (set in `.env`) are processed.
 ## Configuration
 
 - **Credentials**: `~/scalp-bot/.env`
-  - `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `ALPACA_PAPER`
-  - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+  - Required: `ALPACA_API_KEY`, `ALPACA_SECRET_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`
+  - `ALPACA_PAPER` — true (paper) or false (live)
   - `DRY_RUN=true` — signals only, no orders placed
+
+- **Strategy parameters** (all optional, with defaults):
+  - `UNIVERSE` — Comma-separated symbols (default: SOFI,INTC,Z,DAL,RIVN,SBUX,CCL,DIS,F,GM,PLTR,SNAP)
+  - `POSITION_PCT` — % of equity per trade (default: 10)
+  - `ATR_PCT_THRESHOLD` — Min range/ATR ratio (default: 0.25)
+  - `TARGET_FIB` — Fibonacci target level (default: 0.618)
+  - `RR_RATIO` — Risk:reward ratio (default: 2.0)
+  - `SESSION_END` — Entry window close HHMM (default: 1100)
+  - `HARD_EXIT` — Force-close time HHMM (default: 1130)
+  - `POLL_INTERVAL_MS` — Polling interval (default: 30000)
+  - `MIN_ATR` — Min daily ATR filter (default: 0.50)
+  - `MIN_POSITION_USD` — Min position size USD (default: 100)
+
+See `.env.example` for the full list.
 
 ## Safety Rules
 
@@ -88,3 +102,5 @@ Only messages from `TELEGRAM_CHAT_ID` (set in `.env`) are processed.
 - Always warn before disabling dry-run mode
 - Never modify `.env` API keys without explicit user instruction
 - The bot auto-closes all positions at 11:30 AM ET
+- The bot validates required env vars on startup and exits with a clear error if any are missing
+- SIGTERM (from PM2) and SIGINT both trigger graceful shutdown: cancel open orders, close positions past hard-exit time, save logs
