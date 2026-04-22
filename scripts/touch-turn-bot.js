@@ -685,7 +685,7 @@ async function runBot() {
             pos.status = 'filled';
             pos.fillPrice = parseFloat(order.filled_avg_price);
             // Partial fill detection
-            const filledQty = parseInt(order.filled_qty, 10);
+            const filledQty = parseFloat(order.filled_qty);
             if (filledQty && filledQty < pos.qty) {
               log(`${sym}: PARTIAL FILL — ${filledQty}/${pos.qty} shares at $${pos.fillPrice.toFixed(2)}`, 'error');
               await tgError(`${sym} partial fill: ${filledQty}/${pos.qty} shares`);
@@ -718,7 +718,7 @@ async function runBot() {
               for (const o of orders) {
                 if (o.side === (pos.side === 'long' ? 'sell' : 'buy') && o.filled_avg_price) {
                   const exitPrice = parseFloat(o.filled_avg_price);
-                  const filledQty = parseInt(o.filled_qty, 10) || pos.qty;
+                  const filledQty = parseFloat(o.filled_qty) || pos.qty;
                   realizedPnl = (exitPrice - (pos.fillPrice ?? pos.entryPrice)) * filledQty * (pos.side === 'short' ? -1 : 1);
                   break;
                 }

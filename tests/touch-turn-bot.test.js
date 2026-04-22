@@ -681,3 +681,14 @@ describe('telegram /start debounce', () => {
     assert.ok(now - lastStartCmd >= START_COOLDOWN_MS, 'cooldown expired');
   });
 });
+
+describe('parseFloat vs parseInt for Alpaca qty', () => {
+  it('parseFloat preserves fractional shares from API', () => {
+    const alpacaQty = '10.5';
+    assert.equal(parseFloat(alpacaQty), 10.5);
+    assert.equal(parseInt(alpacaQty, 10), 10);
+  });
+  it('parseFloat handles whole number qty strings', () => {
+    assert.equal(parseFloat('100'), 100);
+  });
+});
