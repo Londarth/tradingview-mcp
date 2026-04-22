@@ -1,3 +1,5 @@
+import 'dotenv/config';
+
 // scripts/lib/alpaca-data.js
 
 export async function fetchBarsPaginated(symbol, timeframe, startDate, endDate, timeout = 30000) {
