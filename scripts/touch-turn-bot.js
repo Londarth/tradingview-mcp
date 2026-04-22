@@ -41,6 +41,11 @@ const activePositions = new Map();
 let isShuttingDown = false;
 let dailyPnl = 0;
 
+// ─── Snapshot debounce cache ───
+let lastSnapshotData = null;
+let lastSnapshotWrite = 0;
+const SNAPSHOT_DEBOUNCE_MS = 10000;
+
 // ─── Alpaca client ───
 const alpaca = new Alpaca({
   keyId: process.env.ALPACA_API_KEY,
@@ -129,6 +134,14 @@ function saveOrphanedPositions(positions) {
 
 async function writeSnapshot(extra = {}) {
   try {
+    const now = Date.now();
+    // If we have recent snapshot data (< 10s old) and no extra data forcing a refresh,
+    // just update the timestamp and extra data without new API calls
+    if (lastSnapshotData && (now - lastSnapshotWrite < SNAPSHOT_DEBOUNCE_MS) && Object.keys(extra).length === 0) {
+      const snap = { ...lastSnapshotData, ts: now, ...extra };
+      fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snap, null, 2));
+      return;
+    }
     const acct = await retry(() => alpaca.getAccount());
     const positions = await retry(() => alpaca.getPositions());
     const posData = positions.map(p => {
@@ -146,7 +159,7 @@ async function writeSnapshot(extra = {}) {
       };
     });
     const snap = {
-      ts: Date.now(),
+      ts: now,
       mode: IS_PAPER ? 'PAPER' : 'LIVE',
       dryRun: DRY_RUN,
       equity: parseFloat(acct.portfolio_value),
@@ -154,6 +167,8 @@ async function writeSnapshot(extra = {}) {
       positions: posData,
       ...extra,
     };
+    lastSnapshotData = { ...snap };
+    lastSnapshotWrite = now;
     fs.writeFileSync(SNAPSHOT_FILE, JSON.stringify(snap, null, 2));
   } catch (e) {
     log(`Snapshot write error: ${e.message}`, 'error');
@@ -798,6 +813,7 @@ async function runBot() {
     try {
       const acct = await retry(() => alpaca.getAccount()).catch(() => null);
       if (acct) {
+        lastSnapshotWrite = 0; // Force snapshot refresh on next writeSnapshot call
         const equity = parseFloat(acct.portfolio_value);
         const totalUnrealized = [...activePositions.values()]
           .filter(p => p.status === 'filled' && p.pnl != null)
