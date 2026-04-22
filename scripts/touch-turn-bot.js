@@ -397,7 +397,7 @@ async function sendEODReport(tradeResults) {
   msg += `${getNYTime().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}\n\n`;
 
   if (!tradeResults || tradeResults.length === 0) {
-    msg += `🤷 No trade today (no candidates passed filters)`;
+    msg += `🤷 No trade today (all candidates filtered by equity cap, min position size, or no scan matches)`;
   } else {
     msg += `${tradeResults.length} trade(s) today:\n`;
     let totalPnl = 0;
@@ -648,7 +648,7 @@ async function runBot() {
   }
 
   if (activePositions.size === 0) {
-    log('No orders placed — exiting');
+    log('No orders placed — all candidates filtered by equity cap, min position size, or no scan matches');
     await sendEODReport([]);
     saveLog();
     return;
