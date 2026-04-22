@@ -101,10 +101,13 @@ function restoreState() {
     if (data.date !== getTodayStr()) return false;
     dailyPnl = data.dailyPnl ?? 0;
     for (const [sym, pos] of data.positions) {
-      activePositions.set(sym, pos);
+      // Only recover positions that are still active (pending, filled, or dry_run)
+      if (pos.status === 'pending' || pos.status === 'filled' || pos.status === 'dry_run') {
+        activePositions.set(sym, pos);
+      }
     }
-    log(`Restored ${activePositions.size} position(s) from state file`);
-    return true;
+    log(`Restored ${activePositions.size} active position(s) from state file`);
+    return activePositions.size > 0;
   } catch (e) {
     log(`State restore error: ${e.message}`, 'error');
     return false;
