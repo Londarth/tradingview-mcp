@@ -54,7 +54,7 @@ function computeCalmar(equityCurve, maxDrawdown) {
   // Count unique days from trade dates if available, otherwise approximate
   const years = Math.max(equityCurve.length / 252, 1 / 252);
   const cagr = Math.pow(1 + totalReturn, 1 / years) - 1;
-  return cagr / (maxDrawdown * 100 || 1);
+  return cagr / (maxDrawdown || 1);
 }
 
 export function combineSymbolResults(allResults, initialCapital) {
